@@ -1,0 +1,78 @@
+import { io, Socket } from 'socket.io-client';
+
+let socket: Socket | null = null;
+
+const getToken = (): string | null => {
+  if (typeof window === 'undefined') return null;
+  return (
+    localStorage.getItem('retroflow_token') ||
+    localStorage.getItem('token') ||
+    null
+  );
+};
+
+export const getRetroSocket = (): Socket => {
+  if (!socket) {
+    const rawUrl =
+      process.env.NEXT_PUBLIC_SOCKET_URL ||
+      process.env.NEXT_PUBLIC_API_URL ||
+      'http://localhost:5000';
+
+    const serverOrigin = rawUrl.replace(/\/api\/?$/, '').replace(/\/+$/, '');
+
+    socket = io(`${serverOrigin}/retro`, {
+      autoConnect: true,
+      reconnection: true,
+      reconnectionAttempts: 10,
+      reconnectionDelay: 1000,
+      transports: ['websocket', 'polling'],
+      withCredentials: true,
+      auth: (cb) => {
+        cb({ token: getToken() });
+      },
+    });
+
+    if (process.env.NODE_ENV !== 'production') {
+      socket.on('connect', () => {
+        console.log(
+          `%c⚡ [Socket.io] Connected to /retro namespace (ID: ${socket?.id})`,
+          'color: #10b981; font-weight: bold;'
+        );
+      });
+
+      socket.on('disconnect', (reason) => {
+        console.log(
+          `%c⚡ [Socket.io] Disconnected from /retro: ${reason}`,
+          'color: #f59e0b; font-weight: bold;'
+        );
+      });
+
+      socket.on('connect_error', (error) => {
+        console.warn('⚠️ [Socket.io] Connection Error:', error.message);
+      });
+    }
+  } else {
+    const token = getToken();
+    if (token) {
+      socket.auth = { token };
+    }
+  }
+
+  return socket;
+};
+
+export const updateRetroSocketAuth = (token: string) => {
+  if (socket) {
+    socket.auth = { token };
+    if (!socket.connected) {
+      socket.connect();
+    }
+  }
+};
+
+export const disconnectRetroSocket = () => {
+  if (socket) {
+    socket.disconnect();
+    socket = null;
+  }
+};

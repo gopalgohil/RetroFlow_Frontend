@@ -1,0 +1,228 @@
+@import "tailwindcss";
+
+@custom-variant dark (&:where(.dark, [data-theme="dark"], .dark *, [data-theme="dark"] *));
+
+:root {
+  --background: #f8fafc;
+  --foreground: #0f172a;
+  --brand-green: #88c958;
+  --brand-green-hover: #96dc63;
+  --brand-green-light: #eaf5e3;
+  --brand-green-border: #cdeac0;
+}
+
+[data-theme="dark"],
+.dark {
+  --background: #08090a;
+  --foreground: #f8fafc;
+  --brand-green: #88c958;
+  --brand-green-hover: #96dc63;
+  --brand-green-light: rgba(136, 201, 88, 0.12);
+  --brand-green-border: rgba(136, 201, 88, 0.3);
+}
+
+[data-theme="light"],
+.light {
+  --background: #f8fafc;
+  --foreground: #0f172a;
+  --brand-green: #88c958;
+  --brand-green-hover: #96dc63;
+  --brand-green-light: #eaf5e3;
+  --brand-green-border: #cdeac0;
+}
+
+@theme inline {
+  --color-background: var(--background);
+  --color-foreground: var(--foreground);
+  --color-brand: var(--brand-green);
+  --color-brand-hover: var(--brand-green-hover);
+  --color-brand-light: var(--brand-green-light);
+  --color-brand-border: var(--brand-green-border);
+  --font-sans: var(--font-geist-sans);
+  --font-mono: var(--font-geist-mono);
+}
+
+body {
+  background: var(--background);
+  color: var(--foreground);
+  font-family: var(--font-geist-sans), -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Inter", sans-serif;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+/* ========================================================== */
+/* Bulletproof Zero-Flicker Theme Rules (Evaluated at Parse Time) */
+/* ========================================================== */
+
+/* Dark Mode Rules (Digiflux Deep Dark Black Theme) */
+[data-theme="dark"] .theme-bg,
+.dark .theme-bg {
+  background-color: #08090a !important;
+  color: #f8fafc !important;
+}
+[data-theme="dark"] .theme-header,
+.dark .theme-header {
+  background-color: rgba(8, 9, 10, 0.95) !important;
+  border-color: rgba(255, 255, 255, 0.08) !important;
+}
+[data-theme="dark"] .theme-brand-name,
+.dark .theme-brand-name {
+  color: #ffffff !important;
+}
+[data-theme="dark"] .theme-heading,
+.dark .theme-heading {
+  color: #ffffff !important;
+}
+[data-theme="dark"] .theme-subtext,
+.dark .theme-subtext {
+  color: #94a3b8 !important;
+}
+[data-theme="dark"] .theme-card,
+.dark .theme-card {
+  background-color: #0e1015 !important;
+  border-color: rgba(255, 255, 255, 0.08) !important;
+}
+[data-theme="dark"] .theme-card:hover,
+.dark .theme-card:hover {
+  border-color: rgba(136, 201, 88, 0.5) !important;
+}
+[data-theme="dark"] .theme-card-title,
+.dark .theme-card-title {
+  color: #ffffff !important;
+}
+[data-theme="dark"] .theme-card-desc,
+.dark .theme-card-desc {
+  color: #94a3b8 !important;
+}
+[data-theme="dark"] .theme-btn-secondary,
+.dark .theme-btn-secondary {
+  background-color: #12151c !important;
+  color: #f8fafc !important;
+  border-color: rgba(255, 255, 255, 0.08) !important;
+}
+[data-theme="dark"] .theme-btn-secondary:hover,
+.dark .theme-btn-secondary:hover {
+  background-color: #1a1e28 !important;
+  border-color: rgba(255, 255, 255, 0.16) !important;
+}
+[data-theme="dark"] .theme-footer,
+.dark .theme-footer {
+  border-color: rgba(255, 255, 255, 0.08) !important;
+  color: #64748b !important;
+}
+[data-theme="dark"] .theme-glow,
+.dark .theme-glow {
+  background: radial-gradient(circle, rgba(136, 201, 88, 0.2) 0%, rgba(136, 201, 88, 0.1) 40%, transparent 70%) !important;
+  opacity: 1 !important;
+}
+[data-theme="dark"] .theme-pill,
+.dark .theme-pill {
+  background-color: rgba(136, 201, 88, 0.12) !important;
+  color: #88c958 !important;
+  border-color: rgba(136, 201, 88, 0.3) !important;
+}
+[data-theme="dark"] .theme-nav-link,
+.dark .theme-nav-link {
+  color: #cbd5e1 !important;
+}
+[data-theme="dark"] .theme-nav-link:hover,
+.dark .theme-nav-link:hover {
+  color: #ffffff !important;
+  background-color: rgba(255, 255, 255, 0.05) !important;
+}
+[data-theme="dark"] .theme-toggle-btn,
+.dark .theme-toggle-btn {
+  background-color: #0e1015 !important;
+  border-color: rgba(255, 255, 255, 0.1) !important;
+  color: #88c958 !important;
+}
+
+/* Light Mode Rules (Digiflux Crisp Clean Green Theme) */
+[data-theme="light"] .theme-bg,
+.light .theme-bg {
+  background: #f8fafc !important;
+  color: #0f172a !important;
+}
+[data-theme="light"] .theme-header,
+.light .theme-header {
+  background-color: rgba(255, 255, 255, 0.95) !important;
+  border-color: rgba(226, 232, 240, 0.9) !important;
+  box-shadow: 0 1px 2px 0 rgba(0, 0, 0, 0.03) !important;
+}
+[data-theme="light"] .theme-brand-name,
+.light .theme-brand-name {
+  color: #0f172a !important;
+}
+[data-theme="light"] .theme-heading,
+.light .theme-heading {
+  color: #0f172a !important;
+}
+[data-theme="light"] .theme-subtext,
+.light .theme-subtext {
+  color: #64748b !important;
+}
+[data-theme="light"] .theme-card,
+.light .theme-card {
+  background-color: #ffffff !important;
+  border-color: rgba(226, 232, 240, 0.9) !important;
+  box-shadow: 0 1px 3px 0 rgba(0, 0, 0, 0.04) !important;
+}
+[data-theme="light"] .theme-card:hover,
+.light .theme-card:hover {
+  border-color: rgba(92, 176, 40, 0.4) !important;
+  box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.05) !important;
+}
+[data-theme="light"] .theme-card-title,
+.light .theme-card-title {
+  color: #0f172a !important;
+}
+[data-theme="light"] .theme-card-desc,
+.light .theme-card-desc {
+  color: #64748b !important;
+}
+[data-theme="light"] .theme-btn-secondary,
+.light .theme-btn-secondary {
+  background-color: #ffffff !important;
+  color: #1e293b !important;
+  border-color: #e2e8f0 !important;
+  box-shadow: 0 1px 2px 0 rgba(0, 0, 0, 0.04) !important;
+}
+[data-theme="light"] .theme-btn-secondary:hover,
+.light .theme-btn-secondary:hover {
+  background-color: #f8fafc !important;
+}
+[data-theme="light"] .theme-footer,
+.light .theme-footer {
+  border-color: #e2e8f0 !important;
+  color: #64748b !important;
+}
+[data-theme="light"] .theme-glow,
+.light .theme-glow {
+  background: radial-gradient(circle, rgba(92, 176, 40, 0.18) 0%, rgba(16, 185, 129, 0.12) 40%, transparent 70%) !important;
+  opacity: 0.8 !important;
+}
+[data-theme="light"] .theme-pill,
+.light .theme-pill {
+  background-color: #eaf5e3 !important;
+  color: #3d8318 !important;
+  border-color: #cdeac0 !important;
+  box-shadow: 0 1px 2px 0 rgba(0, 0, 0, 0.03) !important;
+}
+[data-theme="light"] .theme-nav-link,
+.light .theme-nav-link {
+  color: #334155 !important;
+}
+[data-theme="light"] .theme-nav-link:hover,
+.light .theme-nav-link:hover {
+  color: #0f172a !important;
+  background-color: #f1f5f9 !important;
+}
+[data-theme="light"] .theme-toggle-btn,
+.light .theme-toggle-btn {
+  background-color: #ffffff !important;
+  border-color: #e2e8f0 !important;
+  color: #5cb028 !important;
+  box-shadow: 0 1px 2px 0 rgba(0, 0, 0, 0.03) !important;
+}
+
+

@@ -1,0 +1,1040 @@
+'use client';
+
+import React, { useState, useEffect, Suspense } from 'react';
+import { useParams, useRouter, useSearchParams } from 'next/navigation';
+import Link from 'next/link';
+import {
+  Sidebar,
+  CustomizeRetroModal,
+  WelcomeToast,
+  MyProfileModal,
+  LogoutConfirmModal,
+} from '@/components/dashboard';
+import { ProjectSwitcher } from '@/components/navigation/ProjectSwitcher';
+import {
+  OverviewTab,
+  SprintsTab,
+  RetrosTab,
+  TeamSettingsTab,
+} from '@/components/project/tabs';
+import {
+  ProjectDetailSkeleton,
+  OverviewTabSkeleton,
+  SprintsTabSkeleton,
+  RetrosTabSkeleton,
+  TeamTabSkeleton,
+} from '@/components/project/ProjectSkeletons';
+import { ThemeToggle } from '@/components/ui';
+import { Project } from '@/types/project';
+import { ProjectApiService } from '@/services/projectApi';
+import { ProjectDataService } from '@/services/mockProjectData';
+import { CreateRetroPayload } from '@/types/retro';
+import { api, ENDPOINTS } from '@/lib/api';
+import { getRetroSocket } from '@/lib/socket';
+import {
+  FolderKanban,
+  Calendar,
+  Layers,
+  Users,
+  Settings,
+  Activity,
+  Plus,
+  ArrowLeft,
+  Share2,
+  Sparkles,
+  Search,
+  Bell,
+  Menu,
+  ChevronDown,
+  LogOut,
+  User as UserIcon,
+} from 'lucide-react';
+
+function ProjectDetailContent() {
+  const params = useParams();
+  const searchParams = useSearchParams();
+  const router = useRouter();
+
+  const projectId = (params?.projectId as string) || 'proj-pgi';
+  const tabParam = searchParams.get('tab') || 'overview';
+
+  const [project, setProject] = useState<Project | null>(null);
+  const [currentUser, setCurrentUser] = useState<{
+    name: string;
+    email: string;
+    role?: string;
+    projectRole?: string;
+  } | null>(null);
+  const [isClientMounted, setIsClientMounted] = useState(false);
+  const [accessDeniedError, setAccessDeniedError] = useState<string | null>(null);
+  const [projectNotFoundError, setProjectNotFoundError] = useState<boolean>(false);
+  const [activeTab, setActiveTab] = useState<'overview' | 'sprints' | 'retros' | 'team'>(
+    (tabParam as any) || 'overview'
+  );
+  const [isMobileSidebarOpen, setIsMobileSidebarOpen] = useState(false);
+  const [isCreateRetroOpen, setIsCreateRetroOpen] = useState(false);
+  const [isSwitchingProject, setIsSwitchingProject] = useState(false);
+  const [isTabTransitioning, setIsTabTransitioning] = useState(false);
+  const [isLoading, setIsLoading] = useState(true);
+  const [activeSessionsCount, setActiveSessionsCount] = useState<number>(0);
+
+  useEffect(() => {
+    setIsClientMounted(true);
+  }, []);
+
+  useEffect(() => {
+    let isMounted = true;
+    try {
+      const cached = sessionStorage.getItem('retroflow_active_sessions_count');
+      if (cached !== null) {
+        const parsed = parseInt(cached, 10);
+        if (!isNaN(parsed) && parsed > 0) setActiveSessionsCount(parsed);
+      }
+    } catch {}
+    api
+      .get(ENDPOINTS.RETROS)
+      .then((res) => {
+        if (!isMounted) return;
+        const list = Array.isArray(res) ? res : Array.isArray(res?.data) ? res.data : [];
+        const count = list.filter((s: any) => s.status === 'active').length;
+        setActiveSessionsCount(count);
+        try {
+          sessionStorage.setItem('retroflow_active_sessions_count', String(count));
+        } catch {}
+      })
+      .catch(() => {});
+
+    return () => {
+      isMounted = false;
+    };
+  }, []);
+
+  const [isProfileDropdownOpen, setIsProfileDropdownOpen] = useState(false);
+  const [isProfileModalOpen, setIsProfileModalOpen] = useState(false);
+  const [isLogoutModalOpen, setIsLogoutModalOpen] = useState(false);
+  const profileDropdownRef = React.useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    const handleOutsideClick = (e: MouseEvent) => {
+      if (profileDropdownRef.current && !profileDropdownRef.current.contains(e.target as Node)) {
+        setIsProfileDropdownOpen(false);
+      }
+    };
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') {
+        setIsProfileDropdownOpen(false);
+      }
+    };
+    document.addEventListener('mousedown', handleOutsideClick);
+    document.addEventListener('keydown', handleKeyDown);
+    return () => {
+      document.removeEventListener('mousedown', handleOutsideClick);
+      document.removeEventListener('keydown', handleKeyDown);
+    };
+  }, []);
+
+  useEffect(() => {
+    const syncProfile = () => {
+      api
+        .get(ENDPOINTS.AUTH.ME)
+        .then((res) => {
+          if (res?.data && res.data.email) {
+            setCurrentUser(res.data);
+            try {
+              localStorage.setItem('retroflow_user', JSON.stringify(res.data));
+            } catch {}
+          }
+        })
+        .catch(() => {});
+    };
+
+    syncProfile();
+  }, []);
+
+  useEffect(() => {
+    if (
+      currentUser &&
+      currentUser.email &&
+      (currentUser as any).isApproved === false &&
+      currentUser.role !== 'admin' &&
+      currentUser.role !== 'manager' &&
+      (currentUser as any).projectRole !== 'Manager'
+    ) {
+      router.push('/dashboard');
+    }
+  }, [currentUser, router]);
+
+  const handleLogout = () => {
+    if (typeof window !== 'undefined') {
+      localStorage.removeItem('retroflow_token');
+      localStorage.removeItem('retroflow_user');
+      localStorage.removeItem('retroflow_rejected');
+      localStorage.removeItem('retroflow_cached_active_project');
+      localStorage.removeItem('retroflow_active_project_id');
+      localStorage.removeItem('retroflow_cached_projects_list');
+      sessionStorage.clear();
+      router.push('/login');
+    }
+  };
+
+  useEffect(() => {
+    try {
+      const cached = sessionStorage.getItem(`retroflow_cached_project_${projectId}`);
+      if (cached) {
+        const parsed = JSON.parse(cached);
+        if (parsed?.id === projectId || parsed?.key?.toLowerCase() === projectId.toLowerCase()) {
+          setProject(parsed);
+        }
+      }
+    } catch { }
+
+    const inviteParam = searchParams.get('invite');
+    if (inviteParam) {
+      ProjectApiService.verifyMagicInvite(projectId, inviteParam)
+        .then((res: any) => {
+          if (res?.token && res?.user) {
+            localStorage.setItem('retroflow_token', res.token);
+            localStorage.setItem('retroflow_user', JSON.stringify(res.user));
+            setCurrentUser(res.user);
+            const currentUrl = new URL(window.location.href);
+            currentUrl.searchParams.delete('invite');
+            window.history.replaceState(null, '', currentUrl.pathname + currentUrl.search);
+          }
+        })
+        .catch((err: any) => {
+          console.warn('[ProjectDetail] Magic invite verification error:', err.message || err);
+        });
+    } else if (typeof window !== 'undefined') {
+      const token = localStorage.getItem('retroflow_token');
+      const saved = localStorage.getItem('retroflow_user');
+      if (!token && !saved) {
+        router.push(`/login?redirect=${encodeURIComponent(window.location.pathname)}`);
+        return;
+      }
+      if (saved) {
+        try {
+          setCurrentUser(JSON.parse(saved));
+        } catch { }
+      }
+    }
+  }, [projectId, searchParams, router]);
+
+  const handleSelectProject = (selectedProj: Project) => {
+    setIsSwitchingProject(true);
+    setAccessDeniedError(null);
+    if (typeof window !== 'undefined') {
+      localStorage.setItem('retroflow_active_project_id', selectedProj.id);
+      localStorage.setItem('retroflow_cached_active_project', JSON.stringify(selectedProj));
+      try {
+        sessionStorage.setItem(`retroflow_cached_project_${selectedProj.id}`, JSON.stringify(selectedProj));
+      } catch { }
+      window.dispatchEvent(new CustomEvent('retroflow_active_project_changed', { detail: selectedProj }));
+    }
+    router.push(`/projects/${selectedProj.id}?tab=${activeTab}`);
+
+    setTimeout(() => {
+      setProject(selectedProj);
+      setIsSwitchingProject(false);
+    }, 280);
+
+    ProjectApiService.getProjectById(selectedProj.id)
+      .then((p) => {
+        if (p) {
+          setProject(p);
+          try {
+            sessionStorage.setItem(`retroflow_cached_project_${p.id}`, JSON.stringify(p));
+            localStorage.setItem('retroflow_cached_active_project', JSON.stringify(p));
+          } catch { }
+          window.dispatchEvent(new CustomEvent('retroflow_active_project_changed', { detail: p }));
+        }
+      })
+      .catch((err: any) => {
+        if (err?.message?.includes('Access Denied') || err?.status === 403) {
+          setAccessDeniedError(
+            err.message || 'Access Denied: You are not assigned as a member or lead of this project.'
+          );
+        }
+      });
+  };
+
+  const handleTabChange = (newTab: 'overview' | 'sprints' | 'retros' | 'team') => {
+    if (newTab === activeTab) return;
+    setIsTabTransitioning(true);
+    setActiveTab(newTab);
+    const url = `/projects/${projectId}?tab=${newTab}`;
+    window.history.pushState(null, '', url);
+    setTimeout(() => {
+      setIsTabTransitioning(false);
+    }, 380);
+  };
+
+  useEffect(() => {
+    let isMounted = true;
+    setIsLoading(true);
+    setAccessDeniedError(null);
+
+    if (!project || (project.id !== projectId && project.key?.toLowerCase() !== projectId.toLowerCase())) {
+      try {
+        const cached = sessionStorage.getItem(`retroflow_cached_project_${projectId}`);
+        if (cached) {
+          const parsed = JSON.parse(cached);
+          if (parsed?.id === projectId || parsed?.key?.toLowerCase() === projectId.toLowerCase()) {
+            setProject(parsed);
+          }
+        } else {
+          const fallback = ProjectDataService.getProjectById(projectId);
+          if (fallback) setProject(fallback);
+        }
+      } catch { }
+    }
+
+    ProjectApiService.getProjectById(projectId)
+      .then((p) => {
+        if (isMounted && p) {
+          setProject(p);
+          setProjectNotFoundError(false);
+          try {
+            sessionStorage.setItem(`retroflow_cached_project_${p.id}`, JSON.stringify(p));
+            localStorage.setItem('retroflow_cached_active_project', JSON.stringify(p));
+            localStorage.setItem('retroflow_active_project_id', p.id);
+          } catch { }
+          window.dispatchEvent(new CustomEvent('retroflow_active_project_changed', { detail: p }));
+        } else if (isMounted && !p) {
+          setProjectNotFoundError(true);
+        }
+      })
+      .catch((err: any) => {
+        if (isMounted) {
+          if (err?.message?.includes('Access Denied') || err?.status === 403) {
+            setAccessDeniedError(
+              err.message ||
+              'Access Denied: You are not assigned as a member or lead of this project.'
+            );
+            return;
+          }
+          const fallback = ProjectDataService.getProjectById(projectId);
+          if (fallback) {
+            setProject(fallback);
+          } else if (err?.status === 404 || err?.message?.toLowerCase().includes('not found')) {
+            setProject(null);
+            setProjectNotFoundError(true);
+            if (typeof window !== 'undefined') {
+              localStorage.removeItem('retroflow_active_project_id');
+              try {
+                sessionStorage.removeItem(`retroflow_cached_project_${projectId}`);
+              } catch {}
+            }
+          }
+        }
+      })
+      .finally(() => {
+        if (isMounted) {
+          setTimeout(() => {
+            if (isMounted) {
+              setIsLoading(false);
+            }
+          }, 350);
+        }
+      });
+
+    return () => {
+      isMounted = false;
+    };
+  }, [projectId]);
+
+  useEffect(() => {
+    let socket: any = null;
+    try {
+      socket = getRetroSocket();
+
+      const onMetricsUpdated = (data: {
+        shareToken: string;
+        cardsCount: number;
+        actionItemsCount: number;
+        topicsCount?: number;
+      }) => {
+        if (!data?.shareToken) return;
+        setProject((prev) => {
+          if (!prev || !prev.retrospectives) return prev;
+          let hasMatch = false;
+          const updatedRetros = prev.retrospectives.map((r) => {
+            if (r.shareToken === data.shareToken || r.id === data.shareToken) {
+              hasMatch = true;
+              return {
+                ...r,
+                cardsCount: data.cardsCount,
+                actionItemsCount: data.actionItemsCount,
+                topicsCount: data.topicsCount ?? r.topicsCount,
+              };
+            }
+            return r;
+          });
+          if (!hasMatch) return prev;
+          const updatedProj = { ...prev, retrospectives: updatedRetros };
+          try {
+            sessionStorage.setItem(`retroflow_cached_project_${updatedProj.id}`, JSON.stringify(updatedProj));
+          } catch { }
+          return updatedProj;
+        });
+      };
+
+      socket.on('retro:metrics_updated', onMetricsUpdated);
+
+      return () => {
+        if (socket) {
+          socket.off('retro:metrics_updated', onMetricsUpdated);
+        }
+      };
+    } catch (e) {
+      console.warn('[ProjectDetail] Live retro socket listener init:', e);
+    }
+  }, [projectId]);
+
+  const handleRetroSave = async (payload: CreateRetroPayload) => {
+    try {
+      let detectedSprintName = payload.sprintName;
+      if (!detectedSprintName && payload.title) {
+        const match = payload.title.match(/sprint\s*(\d+)/i);
+        if (match) detectedSprintName = `Sprint ${match[1]}`;
+      }
+      if (!detectedSprintName) {
+        const nextNum = (project?.retrospectives?.length || 0) + 1;
+        detectedSprintName = `Sprint ${nextNum}`;
+      }
+
+      const res = await api.post(ENDPOINTS.RETROS, {
+        ...payload,
+        projectId: project?.id,
+        projectKey: project?.key,
+        sprintName: detectedSprintName,
+      });
+
+      const createdRetro = res.data;
+      setIsCreateRetroOpen(false);
+
+      if (project && createdRetro) {
+        const newRetroLink = {
+          id: createdRetro._id || `retro-${Date.now()}`,
+          shareToken: createdRetro.shareToken,
+          title: createdRetro.title,
+          scheduledDate: createdRetro.scheduledDate
+            ? new Date(createdRetro.scheduledDate).toISOString().split('T')[0]
+            : new Date().toISOString().split('T')[0],
+          startDate: createdRetro.startDate
+            ? new Date(createdRetro.startDate).toISOString().split('T')[0]
+            : (payload.startDate ? new Date(payload.startDate).toISOString().split('T')[0] : null),
+          endDate: createdRetro.endDate
+            ? new Date(createdRetro.endDate).toISOString().split('T')[0]
+            : (payload.endDate ? new Date(payload.endDate).toISOString().split('T')[0] : null),
+          status: (createdRetro.status || 'active') as 'active' | 'completed' | 'draft',
+          sprintName: createdRetro.sprintName || detectedSprintName,
+          topicsCount: createdRetro.topics?.length || payload.topics.length,
+          cardsCount: 0,
+          actionItemsCount: 0,
+          actionItemsExported: false,
+        };
+
+        const updatedRetros = [newRetroLink, ...(project.retrospectives || [])];
+        const updatedProject = { ...project, retrospectives: updatedRetros };
+        setProject(updatedProject);
+
+        ProjectApiService.getProjectById(project.id)
+          .then((p) => {
+            if (p) setProject(p);
+          })
+          .catch(() => { });
+      }
+
+      if (createdRetro?.shareToken) {
+        router.push(`/retro/${createdRetro.shareToken}`);
+      }
+    } catch (err: any) {
+      console.error('Failed to create project retrospective:', err);
+      if (project) {
+        const fallbackToken = `token-${Date.now().toString(36)}`;
+        router.push(`/retro/${fallbackToken}`);
+      }
+    }
+  };
+
+  const activeUser = currentUser || {
+    name: '',
+    email: '',
+    role: 'member',
+    projectRole: 'Developer',
+  };
+
+  const userEmail = activeUser.email?.toLowerCase().trim();
+  const userRole = activeUser.role?.toLowerCase().trim();
+
+  const isWorkspaceAdmin = Boolean(userRole === 'admin');
+
+  const isDesignatedLead = Boolean(
+    userEmail && project?.lead?.email?.toLowerCase().trim() === userEmail
+  );
+
+  const userMemberRecord = project?.members?.find(
+    (m) => m.email?.toLowerCase().trim() === userEmail
+  );
+
+  const projectAssignedRole = userMemberRecord?.role;
+
+  const effectiveRole =
+    projectAssignedRole ||
+    (isDesignatedLead ? 'Project Lead' : isWorkspaceAdmin ? 'Manager' : 'Developer');
+
+  const normalizedProjectRole = (projectAssignedRole || '').toLowerCase().trim();
+  const isAssignedProjectManager =
+    normalizedProjectRole === 'manager' || normalizedProjectRole.includes('manager');
+  const isAssignedProjectLead =
+    normalizedProjectRole === 'project lead' || normalizedProjectRole.includes('lead');
+
+  const isManager = Boolean(
+    isWorkspaceAdmin ||
+    isAssignedProjectManager ||
+    (isDesignatedLead && !projectAssignedRole)
+  );
+
+  const isProjectLead = Boolean(
+    !isManager && (
+      isDesignatedLead ||
+      isAssignedProjectLead
+    )
+  );
+
+  const isDevOrQAOrDevOps = Boolean(
+    !isWorkspaceAdmin &&
+    !isManager &&
+    !isProjectLead &&
+    ['developer', 'qa', 'tester', 'devops'].some((r) =>
+      effectiveRole.toLowerCase().includes(r)
+    )
+  );
+
+  const canShare = Boolean(isClientMounted && (isWorkspaceAdmin || isManager || isProjectLead) && !isDevOrQAOrDevOps);
+
+  const canDeleteProject = Boolean(isWorkspaceAdmin || isManager);
+
+  const canCreateRetro = Boolean((isWorkspaceAdmin || isManager || isProjectLead) && !isDevOrQAOrDevOps);
+
+  const canManageProject = Boolean(isWorkspaceAdmin || isManager || isProjectLead);
+
+  const initials = activeUser.name
+    ? activeUser.name
+        .split(' ')
+        .filter(Boolean)
+        .map((n) => n[0])
+        .join('')
+        .toUpperCase()
+        .slice(0, 2)
+    : 'G';
+
+  const displayRole = isWorkspaceAdmin
+    ? 'Admin'
+    : (activeUser as any).projectRole &&
+      (activeUser as any).projectRole !== 'member' &&
+      (activeUser as any).projectRole !== 'Unassigned'
+    ? (activeUser as any).projectRole
+    : effectiveRole || 'Developer';
+
+  const currentUserRole =
+    isWorkspaceAdmin ? 'Admin' :
+    isManager ? 'Manager' :
+    isProjectLead ? 'Project Lead' :
+    effectiveRole;
+
+  return (
+    <div className="min-h-screen bg-[#F8FAFC] dark:bg-[#08090a] text-slate-900 dark:text-white flex selection:bg-[#88c958] selection:text-[#08090a] font-sans">
+      <Sidebar
+        activeTab="projects"
+        setActiveTab={(t) => {
+          router.push(`/dashboard?tab=${t}`);
+        }}
+        activeSessionsCount={activeSessionsCount}
+        user={activeUser}
+        isAdmin={isWorkspaceAdmin}
+        onLogout={() => setIsLogoutModalOpen(true)}
+        isOpen={isMobileSidebarOpen}
+        onCloseMobile={() => setIsMobileSidebarOpen(false)}
+      />
+
+      <div className="flex-1 lg:pl-72 flex flex-col min-w-0">
+        <header className="sticky top-0 z-30 h-16 bg-white/80 dark:bg-[#08090a]/90 backdrop-blur-xl border-b border-slate-200/80 dark:border-white/[0.08] px-4 sm:px-6 flex items-center justify-between gap-4">
+          <div className="flex items-center gap-3">
+            <button
+              onClick={() => setIsMobileSidebarOpen(true)}
+              className="p-2 rounded-xl border border-slate-200 dark:border-white/[0.08] text-slate-600 dark:text-slate-400 hover:bg-slate-100 dark:hover:bg-white/[0.05] lg:hidden cursor-pointer"
+            >
+              <Menu className="w-5 h-5" />
+            </button>
+
+            <ProjectSwitcher
+              currentProjectId={projectId}
+              currentProject={project}
+              onSelectProject={handleSelectProject}
+              user={currentUser}
+            />
+          </div>
+
+          <div className="flex items-center gap-2.5">
+            <ThemeToggle />
+
+            <div className="relative shrink-0" ref={profileDropdownRef}>
+              <button
+                type="button"
+                onClick={() => setIsProfileDropdownOpen((prev) => !prev)}
+                aria-expanded={isProfileDropdownOpen}
+                aria-haspopup="true"
+                className="flex items-center gap-2 sm:gap-2.5 pl-2 sm:pl-2.5 pr-2.5 sm:pr-3 py-1.5 rounded-2xl bg-white dark:bg-[#0e1015] hover:bg-slate-50/90 dark:hover:bg-[#0e1015] border border-slate-200/90 dark:border-white/[0.08] dark:hover:border-white/[0.16] shadow-2xs hover:shadow-xs transition-all cursor-pointer select-none"
+              >
+                <div
+                  suppressHydrationWarning
+                  className="w-8 h-8 rounded-xl bg-gradient-to-tr from-[#5cb028] via-[#52a622] to-[#6ec437] text-white dark:from-[#88c958] dark:to-[#6ea347] dark:text-[#08090a] flex items-center justify-center font-bold text-xs shrink-0 shadow-xs"
+                >
+                  {initials}
+                </div>
+
+                <div className="text-left hidden sm:block">
+                  <p suppressHydrationWarning className="text-xs font-bold text-slate-900 dark:text-white leading-tight">
+                    {activeUser.name || 'User'}
+                  </p>
+                  <p suppressHydrationWarning className="text-[11px] font-medium text-slate-400 dark:text-slate-500 capitalize leading-tight">
+                    {displayRole}
+                  </p>
+                </div>
+
+                <ChevronDown
+                  className={`w-3.5 h-3.5 text-slate-400 dark:text-slate-500 transition-transform duration-200 ${
+                    isProfileDropdownOpen ? 'rotate-180 text-[#5cb028] dark:text-[#88c958]' : ''
+                  }`}
+                />
+              </button>
+
+              {isProfileDropdownOpen && (
+                <div className="absolute right-0 mt-2 w-64 bg-white dark:bg-[#0e1015] rounded-2xl border border-slate-200/90 dark:border-white/[0.08] shadow-xl shadow-slate-900/10 dark:shadow-black/70 p-2 z-50 animate-in fade-in zoom-in-95 duration-150">
+                  <div className="p-3 bg-slate-50/80 dark:bg-[#12151c] rounded-xl border border-slate-100 dark:border-white/[0.08] mb-1">
+                    <div className="flex items-center gap-2.5">
+                      <div
+                        suppressHydrationWarning
+                        className="w-9 h-9 rounded-xl bg-gradient-to-tr from-[#5cb028] via-[#52a622] to-[#6ec437] text-white dark:from-[#88c958] dark:to-[#6ea347] dark:text-[#08090a] flex items-center justify-center font-bold text-xs shrink-0 shadow-xs"
+                      >
+                        {initials}
+                      </div>
+                      <div className="overflow-hidden flex-1">
+                        <div className="flex items-center gap-1.5">
+                          <p suppressHydrationWarning className="text-xs font-bold text-slate-900 dark:text-white truncate">
+                            {activeUser.name || 'User'}
+                          </p>
+                          <span
+                            suppressHydrationWarning
+                            className={`px-1.5 py-0.5 rounded text-[9px] font-black uppercase shrink-0 leading-none ${
+                              displayRole.toLowerCase() === 'admin'
+                                ? 'bg-[#88c958]/15 text-[#88c958] border border-[#88c958]/30'
+                                : displayRole.toLowerCase() === 'manager'
+                                ? 'bg-emerald-100 dark:bg-emerald-950/40 text-emerald-800 dark:text-emerald-300 border border-emerald-200 dark:border-emerald-800'
+                                : displayRole.toLowerCase() === 'project lead'
+                                ? 'bg-sky-100 dark:bg-sky-950/40 text-sky-800 dark:text-sky-300 border border-sky-200 dark:border-sky-800'
+                                : displayRole.toLowerCase().includes('qa') || displayRole.toLowerCase().includes('tester')
+                                ? 'bg-purple-100 dark:bg-purple-950/40 text-purple-800 dark:text-purple-300 border border-purple-200 dark:border-purple-800'
+                                : displayRole.toLowerCase() === 'devops'
+                                ? 'bg-cyan-100 dark:bg-cyan-950/40 text-cyan-800 dark:text-cyan-300 border border-cyan-200 dark:border-cyan-800'
+                                : 'bg-slate-100 dark:bg-[#141720] text-slate-800 dark:text-slate-200 border border-slate-200 dark:border-white/[0.08]'
+                            }`}
+                          >
+                            {displayRole}
+                          </span>
+                        </div>
+                        <p
+                          suppressHydrationWarning
+                          className="text-[11px] text-slate-500 dark:text-slate-400 font-medium truncate mt-0.5"
+                          title={activeUser.email}
+                        >
+                          {activeUser.email || ''}
+                        </p>
+                      </div>
+                    </div>
+                  </div>
+
+                  <div className="pt-1 space-y-0.5">
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setIsProfileDropdownOpen(false);
+                        setIsProfileModalOpen(true);
+                      }}
+                      className="w-full flex items-center gap-2.5 px-3 py-2 rounded-xl text-xs font-semibold text-slate-700 dark:text-slate-200 hover:text-[#88c958] dark:hover:text-[#88c958] hover:bg-[#88c958]/10 dark:hover:bg-[#88c958]/10 transition-colors cursor-pointer text-left group"
+                    >
+                      <UserIcon className="w-4 h-4 text-slate-400 group-hover:text-[#88c958] transition-colors" />
+                      <span>My Profile</span>
+                    </button>
+
+                    <div className="my-1 h-px bg-slate-100 dark:border-white/[0.08]" />
+
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setIsProfileDropdownOpen(false);
+                        setIsLogoutModalOpen(true);
+                      }}
+                      className="w-full flex items-center gap-2.5 px-3 py-2 rounded-xl text-xs font-semibold text-rose-600 dark:text-rose-400 hover:text-rose-700 hover:bg-rose-50 dark:hover:bg-rose-950/40 transition-colors cursor-pointer text-left"
+                    >
+                      <LogOut className="w-4 h-4 text-rose-500" />
+                      <span>Log Out</span>
+                    </button>
+                  </div>
+                </div>
+              )}
+            </div>
+          </div>
+        </header>
+
+        {accessDeniedError ? (
+          <div className="flex-1 p-6 sm:p-8 flex items-center justify-center min-h-[50vh]">
+            <div className="max-w-md w-full p-8 rounded-3xl bg-white dark:bg-[#0e1015] border border-slate-200/80 dark:border-white/[0.08] shadow-xl text-center space-y-4 animate-in fade-in zoom-in-95 duration-200">
+              <div className="w-16 h-16 rounded-2xl bg-rose-50 dark:bg-rose-950/40 border border-rose-100 dark:border-rose-900/50 text-rose-600 dark:text-rose-400 flex items-center justify-center font-bold text-2xl mx-auto shadow-2xs">
+                🛡️
+              </div>
+              <div className="space-y-1.5">
+                <h2 className="text-lg font-bold text-slate-900 dark:text-white">Project Access Restricted</h2>
+                <p className="text-xs text-slate-500 dark:text-slate-400 leading-relaxed">
+                  {accessDeniedError}
+                </p>
+              </div>
+              <div className="p-3 rounded-xl bg-slate-50 dark:bg-[#12151c] border border-slate-200/60 dark:border-white/[0.08] text-[11px] text-slate-500 dark:text-slate-400 text-left">
+                <p>
+                  <strong>RBAC Enterprise Policy:</strong> Non-admin users can only view initiatives
+                  they are actively assigned to as a Team Member or Project Lead.
+                </p>
+              </div>
+              <button
+                type="button"
+                onClick={() => router.push('/dashboard')}
+                className="w-full py-2.5 px-4 rounded-xl bg-[#5cb028] hover:bg-[#4e9921] text-white text-xs font-bold shadow-xs transition-colors cursor-pointer dark:bg-[#88c958] dark:hover:bg-[#76b349] dark:text-[#08090a]"
+              >
+                Return to Dashboard
+              </button>
+            </div>
+          </div>
+        ) : projectNotFoundError ? (
+          <div className="flex-1 p-6 sm:p-8 flex items-center justify-center min-h-[50vh]">
+            <div className="max-w-md w-full p-8 rounded-3xl bg-white dark:bg-[#0e1015] border border-slate-200/80 dark:border-white/[0.08] shadow-xl text-center space-y-4 animate-in fade-in zoom-in-95 duration-200">
+              <div className="w-16 h-16 rounded-2xl bg-amber-50 dark:bg-amber-950/40 border border-amber-100 dark:border-amber-900/50 text-amber-600 dark:text-amber-400 flex items-center justify-center font-bold text-2xl mx-auto shadow-2xs">
+                📁
+              </div>
+              <div className="space-y-1.5">
+                <h2 className="text-lg font-bold text-slate-900 dark:text-white">Project Not Found</h2>
+                <p className="text-xs text-slate-500 dark:text-slate-400 leading-relaxed">
+                  This project may have been deleted, or the link is invalid.
+                </p>
+              </div>
+              <button
+                type="button"
+                onClick={() => {
+                  if (typeof window !== 'undefined') {
+                    localStorage.removeItem('retroflow_active_project_id');
+                  }
+                  router.push('/dashboard?tab=projects');
+                }}
+                className="w-full py-2.5 px-4 rounded-xl bg-[#5cb028] hover:bg-[#4e9921] text-white text-xs font-bold shadow-xs transition-colors cursor-pointer dark:bg-[#88c958] dark:hover:bg-[#76b349] dark:text-[#08090a]"
+              >
+                Go to Projects Dashboard
+              </button>
+            </div>
+          </div>
+        ) : !project || isSwitchingProject || isLoading ? (
+          <ProjectDetailSkeleton activeTab={activeTab} />
+        ) : (
+          <>
+
+            <div className="bg-white dark:bg-[#0e1015] border-b border-slate-200/80 dark:border-white/[0.08] px-4 sm:px-6 lg:px-8 py-6">
+              <div className="w-full flex flex-col lg:flex-row lg:items-center justify-between gap-4">
+                <div className="flex items-start gap-4">
+                  <div className="w-12 h-12 rounded-2xl bg-gradient-to-tr from-[#5cb028] via-[#52a622] to-[#6ec437] text-white dark:from-[#88c958] dark:to-[#6ea347] dark:text-[#08090a] font-black text-sm flex items-center justify-center shrink-0 shadow-md shadow-[#5cb028]/25 dark:shadow-[#88c958]/25">
+                    {project.key}
+                  </div>
+
+                  <div className="space-y-1">
+                    <div className="flex flex-wrap items-center gap-2">
+                      <h1 className="text-xl sm:text-2xl font-extrabold text-slate-900 dark:text-white tracking-tight">
+                        {project.name}
+                      </h1>
+                    </div>
+
+                    <p className="text-xs text-slate-500 dark:text-slate-400 max-w-2xl">{project.description}</p>
+
+                    <div className="flex flex-wrap items-center gap-3 text-[11px] text-slate-400 dark:text-slate-500 pt-1 font-medium">
+                      {(() => {
+                        const projectManager =
+                          project.members?.find((m) => (m.role || '').toLowerCase() === 'manager') ||
+                          project.lead;
+                        const isSelf = Boolean(
+                          userEmail &&
+                          projectManager?.email &&
+                          projectManager.email.toLowerCase().trim() === userEmail
+                        );
+                        return (
+                          <span>
+                            Manager:{' '}
+                            <strong className="text-slate-800 dark:text-slate-200">
+                              {projectManager?.name || 'Project Lead'}
+                            </strong>
+                            {isSelf && (
+                              <span className="text-[#3d8318] dark:text-[#88c958] font-bold ml-1">
+                                (You)
+                              </span>
+                            )}
+                          </span>
+                        );
+                      })()}
+                      <span>•</span>
+                      <span>{project.members.length} team members</span>
+                    </div>
+                  </div>
+                </div>
+
+                <div className="flex items-center gap-2 bg-slate-50 dark:bg-[#12151c] p-2 rounded-2xl border border-slate-200/80 dark:border-white/[0.08] shrink-0">
+                  <div className="px-3 py-1.5 text-center">
+                    <span className="text-[10px] text-slate-400 dark:text-slate-500 uppercase font-bold block">Sprints</span>
+                    <span className="text-sm font-extrabold text-slate-800 dark:text-white">{project.sprints.length}</span>
+                  </div>
+                  <div className="h-6 w-px bg-slate-200 dark:border-white/[0.08]" />
+                  <div className="px-3 py-1.5 text-center">
+                    <span className="text-[10px] text-slate-400 dark:text-slate-500 uppercase font-bold block">Retros</span>
+                    <span className="text-sm font-extrabold text-[#3d8318] dark:text-[#88c958]">
+                      {project.retrospectives.length}
+                    </span>
+                  </div>
+                </div>
+              </div>
+
+              <div className="w-full mt-6 pt-2 border-t border-slate-100 dark:border-white/[0.08] flex items-center gap-1 overflow-x-auto">
+                {[
+                  { id: 'overview', label: 'Overview', icon: Activity },
+                  { id: 'sprints', label: 'Sprints & Backlog', icon: Layers, count: project.sprints.length },
+                  { id: 'retros', label: 'Retrospectives', icon: Sparkles, count: project.retrospectives.length },
+                  {
+                    id: 'team',
+                    label: canManageProject ? 'Team & Settings' : 'Team Directory',
+                    icon: Users,
+                    count: project.members.length,
+                  },
+                ].map((tab) => {
+                  const Icon = tab.icon;
+                  const isActive = activeTab === tab.id;
+                  return (
+                    <button
+                      key={tab.id}
+                      onClick={() => handleTabChange(tab.id as any)}
+                      className={`flex items-center gap-2 px-4 py-2.5 rounded-xl text-xs font-bold transition-all whitespace-nowrap cursor-pointer ${isActive
+                          ? 'bg-[#5cb028] text-white shadow-xs dark:bg-[#88c958] dark:text-[#08090a] dark:font-black'
+                          : 'text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-white hover:bg-slate-100/80 dark:hover:bg-white/[0.05]'
+                        }`}
+                    >
+                      <Icon className={`w-4 h-4 ${isActive ? 'text-white dark:text-[#08090a]' : 'text-slate-400 dark:text-slate-500'}`} />
+                      <span>{tab.label}</span>
+                      {tab.count !== undefined && (
+                        <span
+                          className={`px-1.5 py-0.2 rounded-full text-[10px] font-bold ${isActive ? 'bg-white/20 text-white dark:bg-[#08090a]/20 dark:text-[#08090a]' : 'bg-slate-200/80 dark:bg-[#141720] text-slate-600 dark:text-slate-400'
+                            }`}
+                        >
+                          {tab.count}
+                        </span>
+                      )}
+                    </button>
+                  );
+                })}
+              </div>
+            </div>
+
+            <main className="flex-1 px-4 sm:px-6 lg:px-8 py-6 sm:py-8 w-full">
+              {isTabTransitioning ? (
+                <>
+                  {activeTab === 'overview' && <OverviewTabSkeleton />}
+                  {activeTab === 'sprints' && <SprintsTabSkeleton />}
+                  {activeTab === 'retros' && <RetrosTabSkeleton />}
+                  {activeTab === 'team' && <TeamTabSkeleton />}
+                </>
+              ) : (
+                <>
+                  {activeTab === 'overview' && (
+                    <OverviewTab
+                      project={project}
+                      onNavigateToTab={(t) => handleTabChange(t as any)}
+                      canManageProject={canManageProject}
+                      currentUserRole={currentUserRole}
+                    />
+                  )}
+
+                  {activeTab === 'sprints' && (
+                    <SprintsTab
+                      project={project}
+                      onProjectUpdated={(up) => setProject({ ...up })}
+                      canManageProject={canManageProject}
+                      canMarkDone={Boolean(isWorkspaceAdmin || isManager)}
+                      currentUser={activeUser}
+                    />
+                  )}
+
+                  {activeTab === 'retros' && (
+                    <RetrosTab
+                      project={project}
+                      onCreateRetroClick={() => setIsCreateRetroOpen(true)}
+                      onProjectUpdated={(up) => setProject({ ...up })}
+                      canManageProject={canShare}
+                    />
+                  )}
+
+                  {activeTab === 'team' && (
+                    <TeamSettingsTab
+                      project={project}
+                      onProjectUpdated={(up) => setProject({ ...up })}
+                      canManageProject={canManageProject}
+                      canDeleteProject={canDeleteProject}
+                      currentUserRole={currentUserRole}
+                    />
+                  )}
+                </>
+              )}
+            </main>
+          </>
+        )}
+      </div>
+
+      <CustomizeRetroModal
+        isOpen={isCreateRetroOpen}
+        onClose={() => setIsCreateRetroOpen(false)}
+        onSave={handleRetroSave}
+        projectContext={
+          project
+            ? {
+              id: project.id,
+              name: project.name,
+              key: project.key,
+              sprintName: `Sprint ${(project.retrospectives?.length || 0) + 1}`,
+              members: project.members,
+              retrospectives: project.retrospectives,
+            }
+            : null
+        }
+      />
+
+      <MyProfileModal
+        isOpen={isProfileModalOpen}
+        onClose={() => setIsProfileModalOpen(false)}
+        user={activeUser}
+        onUserUpdated={(updated) => setCurrentUser((prev) => ({ ...(prev || {}), ...updated }))}
+      />
+
+      <LogoutConfirmModal
+        isOpen={isLogoutModalOpen}
+        onClose={() => setIsLogoutModalOpen(false)}
+        onConfirm={() => {
+          setIsLogoutModalOpen(false);
+          handleLogout();
+        }}
+        user={activeUser}
+      />
+    </div>
+  );
+}
+
+function ProjectDetailFallback() {
+  const [user, setUser] = useState<{
+    name: string;
+    email: string;
+    role?: string;
+    projectRole?: string;
+  } | null>(() => {
+    if (typeof window !== 'undefined') {
+      try {
+        const saved = localStorage.getItem('retroflow_user');
+        if (saved) return JSON.parse(saved);
+      } catch {}
+    }
+    return null;
+  });
+
+  useEffect(() => {
+    if (!user && typeof window !== 'undefined') {
+      try {
+        const saved = localStorage.getItem('retroflow_user');
+        if (saved) setUser(JSON.parse(saved));
+      } catch {}
+    }
+  }, [user]);
+
+  const activeUser = user || {
+    name: '',
+    email: '',
+    role: 'member',
+    projectRole: 'Developer',
+  };
+
+  const isWorkspaceAdmin = Boolean(activeUser.role === 'admin');
+
+  const initials = activeUser.name
+    ? activeUser.name
+        .split(' ')
+        .map((n) => n[0])
+        .join('')
+        .toUpperCase()
+        .slice(0, 2)
+    : 'G';
+
+  const [activeSessionsCount] = useState<number>(0);
+
+  const displayRole = isWorkspaceAdmin
+    ? 'Admin'
+    : (activeUser as any).projectRole || 'Manager';
+
+  return (
+    <div className="min-h-screen bg-[#F8FAFC] dark:bg-[#08090a] text-slate-900 dark:text-white flex selection:bg-[#88c958] selection:text-[#08090a] font-sans">
+      <Sidebar
+        activeTab="projects"
+        setActiveTab={() => {}}
+        activeSessionsCount={activeSessionsCount}
+        user={activeUser}
+        isAdmin={isWorkspaceAdmin}
+        isOpen={false}
+      />
+
+      <div className="flex-1 lg:pl-72 flex flex-col min-w-0">
+        <header className="sticky top-0 z-30 h-16 bg-white/80 dark:bg-[#08090a]/90 backdrop-blur-xl border-b border-slate-200/80 dark:border-white/[0.08] px-4 sm:px-6 flex items-center justify-between gap-4">
+          <div className="flex items-center gap-3">
+            <ProjectSwitcher user={activeUser} />
+          </div>
+
+          <div className="flex items-center gap-2.5">
+            <ThemeToggle />
+
+            <div className="flex items-center gap-2.5 pl-2.5 pr-3 py-1.5 rounded-2xl bg-white dark:bg-[#0e1015] border border-slate-200/90 dark:border-white/[0.08] shadow-2xs select-none">
+              <div className="w-8 h-8 rounded-xl bg-gradient-to-tr from-[#5cb028] via-[#52a622] to-[#6ec437] text-white dark:from-[#88c958] dark:to-[#6ea347] dark:text-[#08090a] flex items-center justify-center font-bold text-xs shrink-0 shadow-xs">
+                {initials}
+              </div>
+              <div className="text-left hidden sm:block">
+                <p className="text-xs font-bold text-slate-900 dark:text-white leading-tight">
+                  {activeUser.name || 'User'}
+                </p>
+                <p className="text-[11px] font-medium text-slate-400 dark:text-slate-500 capitalize leading-tight">
+                  {displayRole}
+                </p>
+              </div>
+            </div>
+          </div>
+        </header>
+
+        <div className="flex-1 overflow-y-auto">
+          <ProjectDetailSkeleton activeTab="overview" />
+        </div>
+      </div>
+    </div>
+  );
+}
+
+export default function ProjectDetailPage() {
+  return (
+    <Suspense fallback={<ProjectDetailFallback />}>
+      <ProjectDetailContent />
+    </Suspense>
+  );
+}

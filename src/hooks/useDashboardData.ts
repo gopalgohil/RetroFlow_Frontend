@@ -1,0 +1,682 @@
+'use client';
+
+import { useState, useCallback, useEffect, useRef } from 'react';
+import { useRouter } from 'next/navigation';
+import { api, ENDPOINTS } from '@/lib/api';
+import { MembersApiService } from '@/services/projectApi';
+import {
+  RetroBoard,
+  CreateRetroPayload,
+  TeamMember,
+  WorkspaceSettingsData,
+  PaginationMeta,
+} from '@/types/retro';
+import { DashboardTab } from './useDashboardTabs';
+
+const DEFAULT_WORKSPACE_SETTINGS: WorkspaceSettingsData = {
+  workspaceName: 'RetroFlow Agile Core',
+  organizationName: 'Agile Engineering Team',
+  defaultVotingLimit: 1,
+  allowAnonymousFeedback: true,
+  timerDefaultMinutes: 10,
+  enableSlackNotifications: false,
+};
+
+const DEFAULT_WORKSPACE_USER = {
+  name: '',
+  email: '',
+  role: 'member',
+  projectRole: 'Developer',
+  isApproved: false,
+};
+
+export function useDashboardData(activeTab: DashboardTab, searchQuery: string) {
+  const router = useRouter();
+
+  const [user, setUser] = useState<{
+    name: string;
+    email: string;
+    role?: string;
+    projectRole?: string;
+    isApproved?: boolean;
+    status?: string;
+  }>(() => {
+    if (typeof window !== 'undefined') {
+      try {
+        const storedUser = localStorage.getItem('retroflow_user');
+        if (storedUser) {
+          const parsed = JSON.parse(storedUser);
+          if (parsed && (parsed.email || parsed.name)) {
+            return parsed;
+          }
+        }
+      } catch {}
+    }
+    return DEFAULT_WORKSPACE_USER;
+  });
+  const [isAuthReady, setIsAuthReady] = useState<boolean>(() => {
+    if (typeof window !== 'undefined') {
+      return Boolean(localStorage.getItem('retroflow_user') || localStorage.getItem('retroflow_token'));
+    }
+    return false;
+  });
+  const [toastMessage, setToastMessage] = useState<string | null>(null);
+
+  const showToast = useCallback((msg: string) => {
+    setToastMessage(msg);
+    setTimeout(() => setToastMessage(null), 3000);
+  }, []);
+
+  useEffect(() => {
+    const token = localStorage.getItem('retroflow_token');
+    const isRejectedFlag = localStorage.getItem('retroflow_rejected') === 'true';
+
+    if (!token && !isRejectedFlag) {
+      router.push('/login');
+      return;
+    }
+
+    const storedUser = localStorage.getItem('retroflow_user');
+    if (storedUser) {
+      try {
+        const parsed = JSON.parse(storedUser);
+        if (parsed && (parsed.email || parsed.name)) {
+          setUser(parsed);
+          setIsAuthReady(true);
+          document.cookie = `retroflow_user=${encodeURIComponent(storedUser)}; path=/; max-age=2592000; SameSite=Lax`;
+        }
+      } catch {}
+    }
+
+    const syncProfile = () => {
+      api
+        .get(ENDPOINTS.AUTH.ME)
+        .then((res) => {
+          if (res?.data && res.data.email) {
+            setUser(res.data);
+            try {
+              const uStr = JSON.stringify(res.data);
+              localStorage.setItem('retroflow_user', uStr);
+              localStorage.removeItem('retroflow_rejected');
+              document.cookie = `retroflow_user=${encodeURIComponent(uStr)}; path=/; max-age=2592000; SameSite=Lax`;
+              document.cookie = 'retroflow_rejected=; path=/; max-age=0; SameSite=Lax';
+            } catch {}
+          }
+        })
+        .catch((err: any) => {
+          const isNotFoundOrDeleted =
+            err?.status === 404 ||
+            err?.status === 401 ||
+            (err?.message && (
+              err.message.toLowerCase().includes('not found') ||
+              err.message.toLowerCase().includes('unauthorized') ||
+              err.message.toLowerCase().includes('logged in')
+            ));
+          if (isNotFoundOrDeleted) {
+            try {
+              localStorage.setItem('retroflow_rejected', 'true');
+              document.cookie = 'retroflow_rejected=true; path=/; max-age=2592000; SameSite=Lax';
+            } catch {}
+          }
+        })
+        .finally(() => {
+          setIsAuthReady(true);
+        });
+    };
+
+    if (!isRejectedFlag) {
+      syncProfile();
+    } else {
+      setIsAuthReady(true);
+    }
+  }, [router]);
+
+  const [sessions, setSessions] = useState<RetroBoard[]>([]);
+  const [isSessionsLoading, setIsSessionsLoading] = useState(true);
+  const sessionsAbortRef = useRef<AbortController | null>(null);
+
+  const fetchSessions = useCallback(async () => {
+    if (sessionsAbortRef.current) {
+      sessionsAbortRef.current.abort();
+    }
+    const controller = new AbortController();
+    sessionsAbortRef.current = controller;
+
+    setIsSessionsLoading(true);
+    try {
+      const res = await api.get(ENDPOINTS.RETROS, {
+        params: searchQuery ? { search: searchQuery.trim() } : undefined,
+        signal: controller.signal,
+      });
+      const list = Array.isArray(res)
+        ? res
+        : Array.isArray(res?.data)
+        ? res.data
+        : Array.isArray(res?.data?.retros)
+        ? res.data.retros
+        : Array.isArray(res?.retros)
+        ? res.retros
+        : [];
+      setSessions(list);
+      try {
+        const count = list.filter((s: any) => s.status === 'active').length;
+        sessionStorage.setItem('retroflow_active_sessions_count', String(count));
+      } catch {}
+    } catch (err: any) {
+      const isAborted =
+        err?.name === 'AbortError' ||
+        err?.name === 'CanceledError' ||
+        err?.code === 'ERR_CANCELED' ||
+        controller.signal.aborted ||
+        (err?.message && String(err.message).toLowerCase().includes('aborted'));
+
+      if (isAborted) {
+        return;
+      }
+      console.error('Failed to load retrospectives:', err.message);
+    } finally {
+      if (!controller.signal.aborted) {
+        setIsSessionsLoading(false);
+      }
+    }
+  }, [searchQuery]);
+
+  const deleteSession = useCallback(
+    async (sessionId: string) => {
+      try {
+        await api.delete(`${ENDPOINTS.RETROS}/${sessionId}`);
+        setSessions((prev) => {
+          const updated = prev.filter((s) => s._id !== sessionId);
+          try {
+            const count = updated.filter((s: any) => s.status === 'active').length;
+            sessionStorage.setItem('retroflow_active_sessions_count', String(count));
+          } catch {}
+          return updated;
+        });
+        showToast('Retrospective session deleted successfully.');
+      } catch (err: any) {
+        showToast(err.message || 'Failed to delete session');
+      }
+    },
+    [showToast]
+  );
+
+  const toggleSessionStatus = useCallback(
+    async (session: RetroBoard) => {
+      const nextStatus: 'active' | 'completed' = session.status === 'completed' ? 'active' : 'completed';
+      try {
+        await api.put(`${ENDPOINTS.RETROS}/${session._id}`, { status: nextStatus });
+        setSessions((prev) => {
+          const updated = prev.map((s) => (s._id === session._id ? { ...s, status: nextStatus } : s));
+          try {
+            const count = updated.filter((s: any) => s.status === 'active').length;
+            sessionStorage.setItem('retroflow_active_sessions_count', String(count));
+          } catch {}
+          return updated;
+        });
+        showToast(
+          nextStatus === 'completed'
+            ? 'Retrospective session marked as completed.'
+            : 'Retrospective session reopened as active.'
+        );
+      } catch (err: any) {
+        showToast(err.message || 'Failed to update session status');
+      }
+    },
+    [showToast]
+  );
+
+  const saveSession = useCallback(
+    async (payload: CreateRetroPayload, editingSessionId?: string) => {
+      if (editingSessionId) {
+        const res = await api.put(`${ENDPOINTS.RETROS}/${editingSessionId}`, payload);
+        setSessions((prev) => {
+          const updated = prev.map((s) => (s._id === editingSessionId ? res.data : s));
+          try {
+            const count = updated.filter((s: any) => s.status === 'active').length;
+            sessionStorage.setItem('retroflow_active_sessions_count', String(count));
+          } catch {}
+          return updated;
+        });
+        showToast('Retrospective updated successfully!');
+        return res.data;
+      } else {
+        const res = await api.post(ENDPOINTS.RETROS, payload);
+        setSessions((prev) => {
+          const updated = [res.data, ...prev];
+          try {
+            const count = updated.filter((s: any) => s.status === 'active').length;
+            sessionStorage.setItem('retroflow_active_sessions_count', String(count));
+          } catch {}
+          return updated;
+        });
+        showToast('🚀 Launching your live retrospective session...');
+        return res.data;
+      }
+    },
+    [showToast]
+  );
+
+  const [members, setMembers] = useState<TeamMember[]>([]);
+  const [pendingRequests, setPendingRequests] = useState<TeamMember[]>([]);
+  const [membersPagination, setMembersPagination] = useState<PaginationMeta>({
+    page: 1,
+    limit: 5,
+    totalItems: 0,
+    totalPages: 1,
+    hasNextPage: false,
+    hasPrevPage: false,
+  });
+  const [membersPage, setMembersPage] = useState<number>(1);
+  const [membersLimit, setMembersLimit] = useState<number>(10);
+  const [membersSearch, setMembersSearch] = useState<string>('');
+  const [isMembersLoading, setIsMembersLoading] = useState(false);
+  const membersAbortRef = useRef<AbortController | null>(null);
+  const removedMemberEmailsRef = useRef<Set<string>>(new Set());
+
+  const membersPageRef = useRef(membersPage);
+  membersPageRef.current = membersPage;
+  const membersLimitRef = useRef(membersLimit);
+  membersLimitRef.current = membersLimit;
+  const membersSearchRef = useRef(membersSearch);
+  membersSearchRef.current = membersSearch;
+
+  const fetchMembers = useCallback(
+    async (
+      pageOverride?: number,
+      limitOverride?: number,
+      searchOverride?: string,
+      minDelayMs: number = 0
+    ) => {
+      if (membersAbortRef.current) {
+        membersAbortRef.current.abort();
+      }
+      const controller = new AbortController();
+      membersAbortRef.current = controller;
+
+      setIsMembersLoading(true);
+      const pageToUse = pageOverride ?? membersPageRef.current;
+      const limitToUse = limitOverride ?? membersLimitRef.current;
+      const searchToUse = searchOverride !== undefined ? searchOverride : membersSearchRef.current;
+
+      try {
+        const fetchPromise = api.get(ENDPOINTS.MEMBERS, {
+          params: {
+            page: pageToUse,
+            limit: limitToUse,
+            search: searchToUse ? searchToUse.trim() : undefined,
+          },
+          signal: controller.signal,
+        });
+
+        const [res] =
+          minDelayMs > 0
+            ? await Promise.all([
+                fetchPromise,
+                new Promise((resolve) => setTimeout(resolve, minDelayMs)),
+              ])
+            : [await fetchPromise];
+
+        if (controller.signal.aborted) return;
+
+        if (res.data) {
+          const filterRemoved = (list: any[]) =>
+            list.filter(
+              (m) =>
+                m &&
+                m.email &&
+                !removedMemberEmailsRef.current.has(m.email.toLowerCase().trim())
+            );
+
+          if (Array.isArray(res.data)) {
+            const sanitized = filterRemoved(res.data);
+            setMembers(sanitized);
+            setPendingRequests([]);
+            setMembersPagination({
+              page: pageToUse,
+              limit: limitToUse,
+              totalItems: sanitized.length,
+              totalPages: Math.ceil(sanitized.length / limitToUse) || 1,
+              hasNextPage: false,
+              hasPrevPage: false,
+            });
+          } else if (res.data.members && Array.isArray(res.data.members)) {
+            const sanitizedMembers = filterRemoved(res.data.members);
+            const sanitizedPending =
+              res.data.pendingRequests && Array.isArray(res.data.pendingRequests)
+                ? filterRemoved(res.data.pendingRequests)
+                : [];
+
+            setMembers(sanitizedMembers);
+            setPendingRequests(sanitizedPending);
+
+            if (res.data.pagination) {
+              const removedCount = res.data.members.length - sanitizedMembers.length;
+              const newTotal = Math.max(0, (res.data.pagination.totalItems || 0) - removedCount);
+              const newLimit = res.data.pagination.limit || limitToUse;
+              const newPages = Math.max(1, Math.ceil(newTotal / newLimit));
+              setMembersPagination({
+                ...res.data.pagination,
+                totalItems: newTotal,
+                totalPages: newPages,
+                hasNextPage: (res.data.pagination.page || pageToUse) < newPages,
+              });
+            }
+          }
+        }
+      } catch (err: any) {
+        const isAborted =
+          err?.name === 'AbortError' ||
+          err?.name === 'CanceledError' ||
+          err?.code === 'ERR_CANCELED' ||
+          controller.signal.aborted ||
+          (err?.message && String(err.message).toLowerCase().includes('aborted'));
+
+        if (isAborted) {
+          return;
+        }
+        console.error('Failed to load workspace members:', err.message);
+      } finally {
+        if (!controller.signal.aborted) {
+          setIsMembersLoading(false);
+        }
+      }
+    },
+    []
+  );
+
+  const handlePageChange = useCallback(
+    (newPage: number) => {
+      setMembersPage(newPage);
+      fetchMembers(newPage, membersLimitRef.current, membersSearchRef.current, 0);
+    },
+    [fetchMembers]
+  );
+
+  const handleLimitChange = useCallback(
+    (newLimit: number) => {
+      setMembersLimit(newLimit);
+      setMembersPage(1);
+      fetchMembers(1, newLimit, membersSearchRef.current, 0);
+    },
+    [fetchMembers]
+  );
+
+  const handleSearchChange = useCallback(
+    (query: string) => {
+      setMembersSearch(query);
+      setMembersPage(1);
+      fetchMembers(1, membersLimitRef.current, query, 0);
+    },
+    [fetchMembers]
+  );
+
+  const addWhitelistMember = useCallback(
+    async (email: string) => {
+      const cleanEmail = email.toLowerCase().trim();
+      removedMemberEmailsRef.current.delete(cleanEmail);
+      try {
+        await api.post(ENDPOINTS.MEMBERS, { email: cleanEmail });
+        MembersApiService.clearMembersCache();
+        showToast(`Developer ${email} whitelisted successfully!`);
+        await fetchMembers(1, membersLimit, membersSearch);
+      } catch (err: any) {
+        showToast(err.message || 'Failed to whitelist member');
+        throw err;
+      }
+    },
+    [fetchMembers, membersLimit, membersSearch, showToast]
+  );
+
+  const removeWhitelistMember = useCallback(
+    async (email: string) => {
+      const cleanEmail = email.toLowerCase().trim();
+      removedMemberEmailsRef.current.add(cleanEmail);
+
+      setMembers((prev) => prev.filter((m) => m.email.toLowerCase().trim() !== cleanEmail));
+      setPendingRequests((prev) => prev.filter((m) => m.email.toLowerCase().trim() !== cleanEmail));
+      setMembersPagination((prev) => {
+        const newTotal = Math.max(0, prev.totalItems - 1);
+        return {
+          ...prev,
+          totalItems: newTotal,
+          totalPages: Math.max(1, Math.ceil(newTotal / (prev.limit || 10))),
+        };
+      });
+
+      try {
+        await api.delete(`${ENDPOINTS.MEMBERS}/${encodeURIComponent(cleanEmail)}`);
+        MembersApiService.clearMembersCache();
+        showToast(`Developer ${email} removed from workspace.`);
+        await fetchMembers(membersPage, membersLimit, membersSearch);
+      } catch (err: any) {
+        removedMemberEmailsRef.current.delete(cleanEmail);
+        showToast(err.message || 'Failed to remove member from workspace');
+        await fetchMembers(membersPage, membersLimit, membersSearch);
+      }
+    },
+    [fetchMembers, membersPage, membersLimit, membersSearch, showToast]
+  );
+
+  const bulkRemoveMembers = useCallback(
+    async (emails: string[]) => {
+      if (!Array.isArray(emails) || emails.length === 0) return;
+      const cleanList = emails.map((e) => e.toLowerCase().trim());
+      const emailSet = new Set(cleanList);
+      cleanList.forEach((e) => removedMemberEmailsRef.current.add(e));
+
+      setMembers((prev) => prev.filter((m) => !emailSet.has(m.email.toLowerCase().trim())));
+      setPendingRequests((prev) => prev.filter((m) => !emailSet.has(m.email.toLowerCase().trim())));
+      setMembersPagination((prev) => {
+        const newTotal = Math.max(0, prev.totalItems - emailSet.size);
+        return {
+          ...prev,
+          totalItems: newTotal,
+          totalPages: Math.max(1, Math.ceil(newTotal / (prev.limit || 10))),
+        };
+      });
+
+      try {
+        await api.post('/api/members/bulk-remove', { emails: cleanList });
+        MembersApiService.clearMembersCache();
+        showToast(`Successfully removed ${emails.length} contributor(s) from workspace.`);
+        await fetchMembers(membersPage, membersLimit, membersSearch);
+      } catch (err: any) {
+        cleanList.forEach((e) => removedMemberEmailsRef.current.delete(e));
+        showToast(err.message || 'Failed to remove selected members');
+        await fetchMembers(membersPage, membersLimit, membersSearch);
+      }
+    },
+    [fetchMembers, membersPage, membersLimit, membersSearch, showToast]
+  );
+
+  const updateMemberRole = useCallback(
+    async (email: string, newRole: string) => {
+      try {
+        await api.patch(`${ENDPOINTS.MEMBERS}/${encodeURIComponent(email)}/role`, { role: newRole });
+        MembersApiService.clearMembersCache();
+        setMembers((prev) =>
+          prev.map((m) =>
+            m.email.toLowerCase() === email.toLowerCase()
+              ? { ...m, projectRole: newRole }
+              : m
+          )
+        );
+        setUser((prevUser) => {
+          if (prevUser && prevUser.email && prevUser.email.toLowerCase() === email.toLowerCase()) {
+            const updated = { ...prevUser, projectRole: newRole };
+            try {
+              localStorage.setItem('retroflow_user', JSON.stringify(updated));
+            } catch {}
+            return updated;
+          }
+          return prevUser;
+        });
+        showToast(`Role updated to ${newRole} for ${email}`);
+      } catch (err: any) {
+        showToast(err.message || 'Failed to update member role');
+        throw err;
+      }
+    },
+    [showToast]
+  );
+
+  const approveMember = useCallback(
+    async (email: string, role: string = 'Developer') => {
+      const cleanEmail = email.toLowerCase().trim();
+
+      setMembers((prev) =>
+        prev.map((m) =>
+          m.email.toLowerCase().trim() === cleanEmail
+            ? {
+                ...m,
+                status: 'active',
+                isApproved: true,
+                projectRole: role || m.projectRole || 'Developer',
+              }
+            : m
+        )
+      );
+      setPendingRequests((prev) =>
+        prev.filter((m) => m.email.toLowerCase().trim() !== cleanEmail)
+      );
+
+      try {
+        await api.patch(`${ENDPOINTS.MEMBERS}/${encodeURIComponent(email)}/approve`, { role });
+        MembersApiService.clearMembersCache();
+        showToast(`Access approved for ${email}!`);
+        await fetchMembers(membersPage, membersLimit, membersSearch);
+      } catch (err: any) {
+        showToast(err.message || 'Failed to approve developer request');
+        await fetchMembers(membersPage, membersLimit, membersSearch);
+        throw err;
+      }
+    },
+    [fetchMembers, membersPage, membersLimit, membersSearch, showToast]
+  );
+
+  const rejectMember = useCallback(
+    async (email: string) => {
+      const cleanEmail = email.toLowerCase().trim();
+      removedMemberEmailsRef.current.add(cleanEmail);
+
+      setMembers((prev) =>
+        prev.filter((m) => m.email.toLowerCase().trim() !== cleanEmail)
+      );
+      setPendingRequests((prev) =>
+        prev.filter((m) => m.email.toLowerCase().trim() !== cleanEmail)
+      );
+      setMembersPagination((prev) => {
+        const newTotal = Math.max(0, prev.totalItems - 1);
+        return {
+          ...prev,
+          totalItems: newTotal,
+          totalPages: Math.max(1, Math.ceil(newTotal / (prev.limit || 10))),
+        };
+      });
+
+      try {
+        await api.delete(`${ENDPOINTS.MEMBERS}/${encodeURIComponent(cleanEmail)}/reject`);
+        MembersApiService.clearMembersCache();
+        showToast(`Registration request for ${email} rejected.`);
+        await fetchMembers(membersPage, membersLimit, membersSearch);
+      } catch (err: any) {
+        removedMemberEmailsRef.current.delete(cleanEmail);
+        showToast(err.message || 'Failed to reject developer request');
+        await fetchMembers(membersPage, membersLimit, membersSearch);
+        throw err;
+      }
+    },
+    [fetchMembers, membersPage, membersLimit, membersSearch, showToast]
+  );
+
+  const [settings, setSettings] = useState<WorkspaceSettingsData>(DEFAULT_WORKSPACE_SETTINGS);
+  const [isSettingsLoading, setIsSettingsLoading] = useState(false);
+  const [isSavingSettings, setIsSavingSettings] = useState(false);
+
+  const fetchSettings = useCallback(async () => {
+    setIsSettingsLoading(true);
+    try {
+      const res = await api.get(ENDPOINTS.SETTINGS);
+      if (res.data) {
+        setSettings(res.data);
+      }
+    } catch (err: any) {
+      console.error('Failed to load workspace settings:', err.message);
+    } finally {
+      setIsSettingsLoading(false);
+    }
+  }, []);
+
+  const saveSettings = useCallback(
+    async (updatedSettings: WorkspaceSettingsData) => {
+      setIsSavingSettings(true);
+      try {
+        const res = await api.put(ENDPOINTS.SETTINGS, updatedSettings);
+        if (res.data) {
+          setSettings(res.data);
+        }
+        showToast('Workspace settings saved successfully!');
+      } catch (err: any) {
+        showToast(err.message || 'Failed to update workspace settings');
+        throw err;
+      } finally {
+        setIsSavingSettings(false);
+      }
+    },
+    [showToast]
+  );
+
+  useEffect(() => {
+    if (activeTab === 'sessions') {
+      fetchSessions();
+    } else if (activeTab === 'members') {
+      fetchMembers();
+    }
+  }, [activeTab, fetchSessions, fetchMembers]);
+
+  useEffect(() => {
+    return () => {
+      sessionsAbortRef.current?.abort();
+      membersAbortRef.current?.abort();
+    };
+  }, []);
+
+  return {
+    user,
+    isAuthReady,
+    toastMessage,
+    showToast,
+    sessions,
+    isSessionsLoading,
+    fetchSessions,
+    deleteSession,
+    toggleSessionStatus,
+    saveSession,
+    activeSessionsCount: sessions.filter((s) => s.status === 'active').length,
+    members,
+    pendingRequests,
+    membersPagination,
+    membersPage,
+    membersLimit,
+    membersSearch,
+    isMembersLoading,
+    fetchMembers,
+    onMembersPageChange: handlePageChange,
+    onMembersLimitChange: handleLimitChange,
+    onMembersSearchChange: handleSearchChange,
+    addWhitelistMember,
+    removeWhitelistMember,
+    bulkRemoveMembers,
+    updateMemberRole,
+    approveMember,
+    rejectMember,
+    settings,
+    isSettingsLoading,
+    isSavingSettings,
+    fetchSettings,
+    saveSettings,
+  };
+}
+
+export default useDashboardData;

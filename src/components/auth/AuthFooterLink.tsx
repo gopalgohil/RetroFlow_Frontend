@@ -1,0 +1,35 @@
+'use client';
+
+import React from 'react';
+import Link from 'next/link';
+
+export interface AuthFooterLinkProps {
+  prompt: string;
+  actionText: string;
+  href: string;
+  className?: string;
+  onClick?: () => void;
+}
+
+export const AuthFooterLink: React.FC<AuthFooterLinkProps> = ({
+  prompt,
+  actionText,
+  href,
+  className = '',
+  onClick,
+}) => {
+  return (
+    <div className={`text-center pt-2 ${className}`}>
+      <p className="text-sm text-slate-500 dark:text-slate-400">
+        {prompt}{' '}
+        <Link
+          href={href}
+          onClick={onClick}
+          className="font-semibold text-[#88c958] hover:text-[#96dc63] hover:underline transition-colors"
+        >
+          {actionText}
+        </Link>
+      </p>
+    </div>
+  );
+};

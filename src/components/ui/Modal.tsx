@@ -1,0 +1,131 @@
+'use client';
+
+import React, { useEffect, useState } from 'react';
+import { createPortal } from 'react-dom';
+import { X } from 'lucide-react';
+
+export interface ModalProps {
+  isOpen: boolean;
+  onClose: () => void;
+  title?: React.ReactNode;
+  description?: React.ReactNode;
+  icon?: React.ReactNode;
+  children: React.ReactNode;
+  footer?: React.ReactNode;
+  maxWidth?: 'sm' | 'md' | 'lg' | 'xl' | '2xl' | '3xl' | '4xl' | '5xl';
+  showCloseButton?: boolean;
+  variant?: 'default' | 'danger';
+}
+
+export const Modal: React.FC<ModalProps> = ({
+  isOpen,
+  onClose,
+  title,
+  description,
+  icon,
+  children,
+  footer,
+  maxWidth = 'md',
+  showCloseButton = true,
+  variant = 'default',
+}) => {
+  const [mounted, setMounted] = useState(false);
+
+  useEffect(() => {
+    setMounted(true);
+  }, []);
+
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.key === 'Escape' && isOpen) onClose();
+    };
+    if (isOpen) {
+      document.body.style.overflow = 'hidden';
+      window.addEventListener('keydown', handleKeyDown);
+    }
+    return () => {
+      document.body.style.overflow = 'unset';
+      window.removeEventListener('keydown', handleKeyDown);
+    };
+  }, [isOpen, onClose]);
+
+  if (!isOpen || !mounted) return null;
+
+  const maxWidthClasses = {
+    sm: 'max-w-sm',
+    md: 'max-w-md',
+    lg: 'max-w-lg',
+    xl: 'max-w-xl',
+    '2xl': 'max-w-2xl',
+    '3xl': 'max-w-3xl',
+    '4xl': 'max-w-4xl',
+    '5xl': 'max-w-5xl',
+  };
+
+  const modalNode = (
+    <div
+      className="fixed inset-0 z-[9999] overflow-y-auto bg-slate-900/60 backdrop-blur-xs flex items-center justify-center p-3 sm:p-4 md:p-6 animate-in fade-in duration-150"
+      onClick={onClose}
+    >
+      <div
+        className={`relative w-full ${maxWidthClasses[maxWidth]} max-h-[90vh] bg-white dark:bg-[#0e1015] border border-slate-200/90 dark:border-white/[0.08] rounded-2xl shadow-2xl overflow-hidden flex flex-col my-auto transition-all animate-in zoom-in-95 duration-150`}
+        onClick={(e) => e.stopPropagation()}
+      >
+        {(title || icon || showCloseButton) && (
+          <div
+            className={`px-6 py-4.5 border-b border-slate-200/80 dark:border-white/[0.08] flex items-center justify-between shrink-0 ${
+              variant === 'danger'
+                ? 'bg-gradient-to-r from-rose-50 via-slate-50/50 to-white dark:from-rose-950/30 dark:via-[#12151c] dark:to-[#0e1015]'
+                : 'bg-gradient-to-r from-emerald-50/50 via-slate-50/50 to-white dark:from-[#88c958]/10 dark:via-[#12151c] dark:to-[#0e1015]'
+            }`}
+          >
+            <div className="flex items-center gap-3 min-w-0">
+              {icon && (
+                <div
+                  className={`w-10 h-10 rounded-xl flex items-center justify-center shadow-md shrink-0 ${
+                    variant === 'danger'
+                      ? 'bg-rose-600 text-white shadow-rose-600/25'
+                      : 'bg-[#5cb028] text-white shadow-[#5cb028]/25 font-bold dark:bg-[#88c958] dark:text-[#08090a] dark:shadow-[#88c958]/25'
+                  }`}
+                >
+                  {icon}
+                </div>
+              )}
+              <div className="min-w-0">
+                {title && (
+                  <h3 className="text-base sm:text-lg font-extrabold text-slate-900 dark:text-white tracking-tight truncate">
+                    {title}
+                  </h3>
+                )}
+                {description && <p className="text-xs text-slate-500 dark:text-slate-400 mt-0.5 truncate">{description}</p>}
+              </div>
+            </div>
+
+            {showCloseButton && (
+              <button
+                type="button"
+                onClick={onClose}
+                className="p-2 rounded-xl text-slate-400 hover:text-slate-600 dark:text-slate-400 dark:hover:text-white hover:bg-slate-100 dark:hover:bg-white/[0.06] transition-colors cursor-pointer shrink-0 ml-2"
+                title="Close modal"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            )}
+          </div>
+        )}
+
+        <div className="p-5 sm:p-6 overflow-y-auto flex-1 min-h-0 text-slate-800 dark:text-slate-200">{children}</div>
+
+        {footer && (
+          <div className="px-6 py-4 border-t border-slate-100 dark:border-white/[0.08] bg-slate-50/60 dark:bg-[#12151c] flex items-center justify-end gap-3 shrink-0">
+            {footer}
+          </div>
+        )}
+      </div>
+    </div>
+  );
+
+  return createPortal(modalNode, document.body);
+};
+
+export default Modal;

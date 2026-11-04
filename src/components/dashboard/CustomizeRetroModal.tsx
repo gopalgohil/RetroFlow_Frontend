@@ -1,0 +1,973 @@
+'use client';
+
+import React, { useState, useEffect, useMemo } from 'react';
+import { createPortal } from 'react-dom';
+import {
+  X,
+  Plus,
+  Trash2,
+  GripVertical,
+  Palette,
+  Smile,
+  Frown,
+  Lightbulb,
+  Puzzle,
+  Rocket,
+  Anchor,
+  Target,
+  Flag,
+  Calendar,
+  ChevronUp,
+  ChevronDown,
+  Check,
+} from 'lucide-react';
+import { RetroTopic, RetroBoard, CreateRetroPayload } from '@/types/retro';
+
+export interface ProjectRetroContext {
+  id: string;
+  name: string;
+  key: string;
+  sprintName?: string;
+  members: Array<{ name: string; email: string; role: string }>;
+  retrospectives?: any[];
+}
+
+interface CustomizeRetroModalProps {
+  isOpen: boolean;
+  onClose: () => void;
+  onSave: (payload: CreateRetroPayload) => Promise<void>;
+  initialData?: RetroBoard | null;
+  projectContext?: ProjectRetroContext | null;
+}
+
+const COLOR_PALETTE = [
+  { label: 'Emerald Green', hex: '#10B981' },
+  { label: 'Crimson Rose', hex: '#F43F5E' },
+  { label: 'Sky Blue', hex: '#0EA5E9' },
+  { label: 'Amber Gold', hex: '#F59E0B' },
+  { label: 'Royal Indigo', hex: '#4F46E5' },
+  { label: 'Deep Purple', hex: '#8B5CF6' },
+  { label: 'Hot Pink', hex: '#EC4899' },
+  { label: 'Teal Cyan', hex: '#06B6D4' },
+];
+
+const AVAILABLE_ICONS = [
+  { id: 'smile', label: 'Smile', icon: Smile },
+  { id: 'frown', label: 'Frown', icon: Frown },
+  { id: 'bulb', label: 'Idea', icon: Lightbulb },
+  { id: 'puzzle', label: 'Puzzle', icon: Puzzle },
+  { id: 'target', label: 'Target', icon: Target },
+  { id: 'rocket', label: 'Speed', icon: Rocket },
+  { id: 'anchor', label: 'Anchor', icon: Anchor },
+  { id: 'flag', label: 'Milestone', icon: Flag },
+];
+
+const TEMPLATE_PRESETS = [
+  {
+    id: 'went_well',
+    name: 'Standard Retrospective',
+    icon: Smile,
+    theme: 'standard',
+    topics: [
+      { title: 'What went well?', description: 'Things we are happy or proud of', icon: 'smile', color: '#10B981' },
+      { title: 'What could be improved?', description: 'Blockers, frictions, or slowdowns', icon: 'frown', color: '#F43F5E' },
+      { title: 'Action Items', description: 'Concrete tasks for the next sprint', icon: 'target', color: '#0EA5E9' },
+    ],
+  },
+];
+
+export const MIN_RETRO_TOPICS = 1;
+export const MAX_RETRO_TOPICS = 6;
+export const MAX_TOPIC_TITLE_LENGTH = 60;
+
+export const CustomizeRetroModal: React.FC<CustomizeRetroModalProps> = ({
+  isOpen,
+  onClose,
+  onSave,
+  initialData,
+  projectContext,
+}) => {
+  const [mounted, setMounted] = useState(false);
+  const [activeTab, setActiveTab] = useState<'general' | 'topics'>('topics');
+
+  useEffect(() => {
+    setMounted(true);
+  }, []);
+
+  const [title, setTitle] = useState('');
+  const [description, setDescription] = useState('');
+  const [scheduledDate, setScheduledDate] = useState('');
+  const [startDate, setStartDate] = useState('');
+  const [endDate, setEndDate] = useState('');
+  const [revealMode, setRevealMode] = useState(false);
+  const [votingLimit, setVotingLimit] = useState(1);
+  const [approvalRequired, setApprovalRequired] = useState(false);
+  const [approvedMembers, setApprovedMembers] = useState<string[]>([]);
+  const [backgroundTheme, setBackgroundTheme] = useState<'sailboat' | 'standard' | 'space' | 'mountain' | 'minimal'>('standard');
+  const [isSubmitting, setIsSubmitting] = useState(false);
+
+  const [topics, setTopics] = useState<RetroTopic[]>([]);
+
+  const [colorPickerIndex, setColorPickerIndex] = useState<number | null>(null);
+  const [iconPickerIndex, setIconPickerIndex] = useState<number | null>(null);
+
+  const [draggedIndex, setDraggedIndex] = useState<number | null>(null);
+  const [errorMessage, setErrorMessage] = useState<string | null>(null);
+
+  const getLocalDateTimeString = (d = new Date()) => {
+    const year = d.getFullYear();
+    const month = String(d.getMonth() + 1).padStart(2, '0');
+    const day = String(d.getDate()).padStart(2, '0');
+    const hours = String(d.getHours()).padStart(2, '0');
+    const minutes = String(d.getMinutes()).padStart(2, '0');
+    return `${year}-${month}-${day}T${hours}:${minutes}`;
+  };
+
+  const getEndOfMonthString = (dateInput: string | Date = new Date()): string => {
+    let year: number;
+    let month: number;
+
+    if (typeof dateInput === 'string' && /^\d{4}-\d{2}-\d{2}/.test(dateInput)) {
+      const parts = dateInput.split('T')[0].split('-');
+      year = parseInt(parts[0], 10);
+      month = parseInt(parts[1], 10) - 1;
+    } else {
+      const d = new Date(dateInput);
+      if (isNaN(d.getTime())) return '';
+      year = d.getFullYear();
+      month = d.getMonth();
+    }
+
+    const lastDay = new Date(year, month + 1, 0);
+    const yyyy = lastDay.getFullYear();
+    const mm = String(lastDay.getMonth() + 1).padStart(2, '0');
+    const dd = String(lastDay.getDate()).padStart(2, '0');
+    return `${yyyy}-${mm}-${dd}`;
+  };
+
+  const getLocalDateString = (d?: string | Date | null) => {
+    if (!d) return '';
+    try {
+      const dateObj = new Date(d);
+      if (isNaN(dateObj.getTime())) return '';
+      return dateObj.toISOString().split('T')[0];
+    } catch {
+      return '';
+    }
+  };
+
+  useEffect(() => {
+    if (initialData) {
+      setTitle(initialData.title);
+      setDescription(initialData.description || '');
+      setScheduledDate(initialData.scheduledDate ? getLocalDateTimeString(new Date(initialData.scheduledDate)) : getLocalDateTimeString());
+      const effectiveStart = initialData.startDate
+        ? getLocalDateString(initialData.startDate)
+        : getLocalDateString(initialData.scheduledDate) || new Date().toISOString().split('T')[0];
+      setStartDate(effectiveStart);
+      setEndDate(
+        initialData.endDate
+          ? getLocalDateString(initialData.endDate)
+          : getEndOfMonthString(effectiveStart)
+      );
+      setRevealMode(initialData.revealMode || false);
+      setVotingLimit(initialData.votingLimit || 1);
+      setApprovalRequired(initialData.approvalRequired || false);
+      setApprovedMembers(initialData.approvedMembers || []);
+      setBackgroundTheme(initialData.backgroundTheme || 'standard');
+      setTopics(initialData.topics || []);
+    } else if (projectContext) {
+      const sprintTag = projectContext.sprintName || 'Sprint 14';
+      setTitle(`${projectContext.name} - ${sprintTag} Retrospective`);
+      setDescription(`Agile feedback & sprint retrospective for ${projectContext.name} (${projectContext.key}).`);
+      setScheduledDate(getLocalDateTimeString());
+      const today = new Date().toISOString().split('T')[0];
+      setStartDate(today);
+      setEndDate(getEndOfMonthString(today));
+      setRevealMode(false);
+      setVotingLimit(1);
+      setApprovalRequired(true); 
+      const memberEmails = (projectContext.members || []).map((m) => m.email.toLowerCase().trim());
+      setApprovedMembers(memberEmails);
+      setBackgroundTheme('standard');
+      setTopics([
+        {
+          topicId: 'topic-1',
+          title: 'What went well?',
+          description: 'Things we are happy or proud of in this sprint',
+          icon: 'smile',
+          color: '#10B981',
+          order: 0,
+        },
+        {
+          topicId: 'topic-2',
+          title: 'What could be improved?',
+          description: 'Blockers, frictions, or slowdowns encountered',
+          icon: 'frown',
+          color: '#F43F5E',
+          order: 1,
+        },
+        {
+          topicId: 'topic-3',
+          title: 'Action Items',
+          description: 'Concrete backlog deliverables for upcoming sprint',
+          icon: 'target',
+          color: '#0EA5E9',
+          order: 2,
+        },
+      ]);
+      const defaultTitle = projectContext?.sprintName
+        ? `${projectContext.sprintName} Retrospective`
+        : 'Sprint 1 Retrospective';
+      setTitle(defaultTitle);
+      setDescription('Continuous alignment session for Engineering & Product team');
+      setScheduledDate(getLocalDateTimeString());
+      const nowDay = new Date().toISOString().split('T')[0];
+      setStartDate(nowDay);
+      setEndDate(getEndOfMonthString(nowDay));
+      setRevealMode(false);
+      setVotingLimit(1);
+      setApprovalRequired(false);
+      setApprovedMembers([]);
+      setBackgroundTheme('standard');
+      setTopics([
+        {
+          topicId: 'topic-1',
+          title: 'What went well?',
+          description: 'Things we are happy or proud of',
+          icon: 'smile',
+          color: '#10B981',
+          order: 0,
+        },
+        {
+          topicId: 'topic-2',
+          title: 'What could be improved?',
+          description: 'Bottlenecks, frictions, or slowdowns',
+          icon: 'frown',
+          color: '#F43F5E',
+          order: 1,
+        },
+        {
+          topicId: 'topic-3',
+          title: 'Action Items',
+          description: 'Concrete deliverables for the upcoming sprint',
+          icon: 'target',
+          color: '#0EA5E9',
+          order: 2,
+        },
+      ]);
+    }
+  }, [initialData, projectContext, isOpen]);
+
+  const handleUpdateTopic = (index: number, field: keyof RetroTopic, value: any) => {
+    setTopics((prev) => {
+      const updated = [...prev];
+      updated[index] = { ...updated[index], [field]: value };
+      return updated;
+    });
+    if (field === 'title' && errorMessage) {
+      setErrorMessage(null);
+    }
+  };
+
+  const handleAddTopic = () => {
+    if (topics.length >= MAX_RETRO_TOPICS) {
+      setErrorMessage(`Maximum ${MAX_RETRO_TOPICS} topic columns allowed.`);
+      return;
+    }
+    setErrorMessage(null);
+    const newOrder = topics.length;
+    const colors = ['#10B981', '#0EA5E9', '#F43F5E', '#F59E0B', '#8B5CF6', '#EC4899'];
+    const chosenColor = colors[newOrder % colors.length];
+
+    setTopics((prev) => [
+      ...prev,
+      {
+        topicId: `topic-${Date.now()}`,
+        title: 'New Discussion Topic',
+        description: 'Add discussion prompt or guidelines here',
+        icon: 'bulb',
+        color: chosenColor,
+        order: newOrder,
+      },
+    ]);
+  };
+
+  const handleDeleteTopic = (index: number) => {
+    if (topics.length <= MIN_RETRO_TOPICS) {
+      setErrorMessage(`At least ${MIN_RETRO_TOPICS} topic column is required.`);
+      return;
+    }
+    setErrorMessage(null);
+    setTopics((prev) => prev.filter((_, idx) => idx !== index));
+  };
+
+  const handleMoveTopic = (fromIndex: number, toIndex: number) => {
+    if (toIndex < 0 || toIndex >= topics.length) return;
+    setTopics((prev) => {
+      const updated = [...prev];
+      const [movedItem] = updated.splice(fromIndex, 1);
+      updated.splice(toIndex, 0, movedItem);
+      return updated.map((item, idx) => ({ ...item, order: idx }));
+    });
+  };
+
+  const handleDragStart = (index: number) => {
+    setDraggedIndex(index);
+  };
+
+  const handleDragOver = (e: React.DragEvent, index: number) => {
+    e.preventDefault();
+    if (draggedIndex === null || draggedIndex === index) return;
+    handleMoveTopic(draggedIndex, index);
+    setDraggedIndex(index);
+  };
+
+  const handleDragEnd = () => {
+    setDraggedIndex(null);
+  };
+
+  const handleApplyPreset = (preset: (typeof TEMPLATE_PRESETS)[0]) => {
+    setBackgroundTheme(preset.theme as any);
+    setTopics(
+      preset.topics.slice(0, MAX_RETRO_TOPICS).map((t, idx) => ({
+        topicId: `topic-${Date.now()}-${idx}`,
+        title: t.title.slice(0, MAX_TOPIC_TITLE_LENGTH),
+        description: t.description,
+        icon: t.icon,
+        color: t.color,
+        order: idx,
+      }))
+    );
+  };
+
+  const todayStr = React.useMemo(() => new Date().toISOString().split('T')[0], []);
+
+  const dateValidation = React.useMemo(() => {
+    if (!startDate && !endDate) {
+      return {
+        isValid: false,
+        error: 'Both Starting Date and Ending Date are required.',
+        field: 'both' as const,
+      };
+    }
+    if (!startDate) {
+      return {
+        isValid: false,
+        error: 'Starting Date is required.',
+        field: 'startDate' as const,
+      };
+    }
+    if (!endDate) {
+      return {
+        isValid: false,
+        error: 'Ending Date is required.',
+        field: 'endDate' as const,
+      };
+    }
+
+    if (!initialData && startDate < todayStr) {
+      return {
+        isValid: false,
+        error: 'Starting date cannot be in the past. Please select today or a future date.',
+        field: 'startDate' as const,
+      };
+    }
+
+    if (endDate < startDate) {
+      return {
+        isValid: false,
+        error: 'Ending date cannot be earlier than starting date.',
+        field: 'endDate' as const,
+      };
+    }
+
+    return {
+      isValid: true,
+      error: null,
+      field: null,
+    };
+  }, [startDate, endDate, initialData, todayStr]);
+
+  const handleStartDateChange = (newStart: string) => {
+    setStartDate(newStart);
+    setErrorMessage(null);
+    if (newStart) {
+      setEndDate(getEndOfMonthString(newStart));
+    }
+  };
+
+  const hasOverLimitTopic = topics.some((t) => t.title.length > MAX_TOPIC_TITLE_LENGTH);
+  const hasEmptyTopic = topics.some((t) => !t.title.trim());
+  const isTopicsCountValid = topics.length >= MIN_RETRO_TOPICS && topics.length <= MAX_RETRO_TOPICS;
+
+  const activeMonthlyRetro = useMemo(() => {
+    if (initialData || !projectContext?.retrospectives) return null;
+    const now = new Date();
+    const currentYear = now.getFullYear();
+    const currentMonth = now.getMonth();
+    const startOfMonth = new Date(currentYear, currentMonth, 1);
+    const endOfMonth = new Date(currentYear, currentMonth + 1, 0, 23, 59, 59, 999);
+    const todayMidnight = new Date(new Date().setHours(0, 0, 0, 0));
+
+    return projectContext.retrospectives.find((r: any) => {
+      const rDate = r.startDate || r.scheduledDate ? new Date(r.startDate || r.scheduledDate) : null;
+      const rEndDate = r.endDate ? new Date(r.endDate) : null;
+      const isSameMonth = rDate && rDate >= startOfMonth && rDate <= endOfMonth;
+      const isNotExpired = rEndDate ? rEndDate >= todayMidnight : true;
+      return isSameMonth && isNotExpired;
+    });
+  }, [initialData, projectContext]);
+
+  const isFormValid =
+    title.trim().length > 0 &&
+    dateValidation.isValid &&
+    isTopicsCountValid &&
+    !hasOverLimitTopic &&
+    !hasEmptyTopic &&
+    !activeMonthlyRetro;
+
+  const handleSave = async () => {
+    if (!initialData && activeMonthlyRetro) {
+      setErrorMessage(`Project "${projectContext?.name}" already has an active retrospective for this month (${activeMonthlyRetro.title}). In accordance with company policy, only 1 retrospective per project per month is allowed until month-end.`);
+      return;
+    }
+    if (!title.trim()) {
+      setErrorMessage('Please provide a retrospective session title.');
+      setActiveTab('general');
+      return;
+    }
+    if (!dateValidation.isValid) {
+      setErrorMessage(dateValidation.error || 'Please provide valid starting and ending dates.');
+      setActiveTab('general');
+      return;
+    }
+    if (topics.length < MIN_RETRO_TOPICS) {
+      setErrorMessage(`Please configure at least ${MIN_RETRO_TOPICS} topic column.`);
+      setActiveTab('topics');
+      return;
+    }
+    if (topics.length > MAX_RETRO_TOPICS) {
+      setErrorMessage(`You can configure at most ${MAX_RETRO_TOPICS} topic columns.`);
+      setActiveTab('topics');
+      return;
+    }
+
+    const emptyTopicIndex = topics.findIndex((t) => !t.title.trim());
+    if (emptyTopicIndex !== -1) {
+      setErrorMessage(`Topic column #${emptyTopicIndex + 1} must have a title.`);
+      setActiveTab('topics');
+      return;
+    }
+
+    const overLimitTopicIndex = topics.findIndex((t) => t.title.length > MAX_TOPIC_TITLE_LENGTH);
+    if (overLimitTopicIndex !== -1) {
+      setErrorMessage(
+        `Topic column #${overLimitTopicIndex + 1} title cannot exceed ${MAX_TOPIC_TITLE_LENGTH} characters (currently ${topics[overLimitTopicIndex].title.length} characters).`
+      );
+      setActiveTab('topics');
+      return;
+    }
+
+    let validDate: string | undefined = undefined;
+    if (startDate) {
+      const d = new Date(startDate);
+      if (!isNaN(d.getTime())) {
+        validDate = d.toISOString();
+      }
+    } else if (scheduledDate) {
+      const d = new Date(scheduledDate);
+      if (!isNaN(d.getTime())) {
+        validDate = d.toISOString();
+      }
+    } else {
+      validDate = new Date().toISOString();
+    }
+
+    setErrorMessage(null);
+    setIsSubmitting(true);
+    try {
+      await onSave({
+        title: title.trim(),
+        description: description.trim(),
+        scheduledDate: validDate,
+        startDate: startDate ? new Date(startDate).toISOString() : undefined,
+        endDate: endDate ? new Date(endDate).toISOString() : undefined,
+        status: initialData?.status || 'active',
+        approvalRequired,
+        revealMode,
+        votingLimit,
+        backgroundTheme,
+        topics: topics.map((t, idx) => ({ ...t, order: idx })),
+        approvedMembers,
+        projectId: projectContext?.id,
+        projectKey: projectContext?.key,
+        sprintName: projectContext?.sprintName,
+        isProjectScoped: !!projectContext,
+      });
+      onClose();
+    } catch (err: any) {
+      setErrorMessage(err.message || 'Failed to save retrospective session.');
+    } finally {
+      setIsSubmitting(false);
+    }
+  };
+
+  if (!isOpen || !mounted) return null;
+
+  const modalContent = (
+    <div className="fixed inset-0 z-[9999] flex items-center justify-center p-4 sm:p-6 overflow-y-auto bg-black/80 backdrop-blur-xs animate-in fade-in duration-200">
+      <div className="relative w-full max-w-4xl bg-white dark:bg-[#0e1015] rounded-2xl shadow-2xl border border-slate-200 dark:border-white/[0.08] overflow-hidden flex flex-col max-h-[90vh]">
+        <div className="px-6 py-4 border-b border-slate-200 dark:border-white/[0.08] flex items-center justify-between bg-slate-50/70 dark:bg-[#12151c]/80">
+          <div className="flex items-center gap-2.5">
+            <div className="w-8 h-8 rounded-lg bg-[#5cb028] text-white dark:bg-[#88c958] dark:text-[#08090a] flex items-center justify-center font-black text-xs shadow-xs">
+              RF
+            </div>
+            <div>
+              <h2 className="text-base font-bold text-slate-900 dark:text-white leading-none">
+                {initialData ? 'Edit Retrospective Session' : 'Customize Retrospective'}
+              </h2>
+              <p className="text-xs text-slate-500 dark:text-slate-400 mt-1">
+                Inspired by TeamRetro — configure topics, voting, and participant permissions
+              </p>
+            </div>
+          </div>
+
+          <button
+            onClick={onClose}
+            className="p-1.5 rounded-lg text-slate-400 hover:text-slate-700 dark:hover:text-slate-200 hover:bg-slate-200/60 dark:hover:bg-white/[0.08] transition-colors cursor-pointer"
+          >
+            <X className="w-5 h-5" />
+          </button>
+        </div>
+
+        {projectContext && (
+          <div className="px-6 py-2.5 bg-gradient-to-r from-emerald-50/50 via-slate-50 to-emerald-50/30 dark:from-[#0e1015] dark:via-[#12151c] dark:to-[#0e1015] border-b border-emerald-100/90 dark:border-white/[0.08] flex flex-wrap items-center justify-between gap-2 text-xs">
+            <div className="flex items-center gap-2">
+              <span className="px-2 py-0.5 rounded-md bg-[#5cb028] text-white dark:bg-[#88c958] dark:text-[#08090a] font-mono font-black text-[10px] uppercase shadow-2xs">
+                {projectContext.key}
+              </span>
+              <span className="font-bold text-slate-900 dark:text-white">
+                Initiative: {projectContext.name}
+              </span>
+              {projectContext.sprintName && (
+                <span className="text-[#3d8318] dark:text-[#88c958] bg-white dark:bg-[#12151c] px-2 py-0.5 rounded-md border border-[#cdeac0] dark:border-[#88c958]/30 font-semibold text-[11px]">
+                  {projectContext.sprintName}
+                </span>
+              )}
+            </div>
+            <span className="text-[11px] font-bold text-emerald-700 dark:text-[#88c958] bg-emerald-50 dark:bg-[#88c958]/15 px-2.5 py-0.5 rounded-full border border-emerald-200 dark:border-[#88c958]/30 flex items-center gap-1.5">
+              <span className="w-1.5 h-1.5 rounded-full bg-[#88c958] animate-pulse" />
+              {projectContext.members.length} Team Members
+            </span>
+          </div>
+        )}
+
+        {activeMonthlyRetro && (
+          <div className="mx-6 mt-3.5 p-3.5 rounded-xl bg-amber-50 dark:bg-amber-950/40 border border-amber-200 dark:border-amber-800/40 text-xs text-amber-800 dark:text-amber-200 flex items-start gap-2.5 shadow-2xs">
+            <span className="text-sm shrink-0 mt-0.5">⚠️</span>
+            <div>
+              <p className="font-extrabold">
+                {projectContext?.name} already has an active retrospective for this month ({activeMonthlyRetro.title})
+              </p>
+              <p className="text-[11px] text-amber-700 dark:text-amber-300 mt-0.5">
+                In accordance with company policy, 1 retrospective per project per month is allowed until month-end. You can manage, export, or delete the current session to make changes.
+              </p>
+            </div>
+          </div>
+        )}
+
+        <div className="px-6 border-b border-slate-200 dark:border-white/[0.08] bg-white dark:bg-[#0e1015] flex items-center gap-8">
+          {[
+            { id: 'general', label: 'GENERAL' },
+            { id: 'topics', label: 'TOPICS' },
+          ].map((tab) => {
+            const isActive = activeTab === tab.id;
+            return (
+              <button
+                key={tab.id}
+                onClick={() => setActiveTab(tab.id as any)}
+                className={`py-3 text-xs font-bold tracking-wider uppercase border-b-2 transition-all cursor-pointer ${
+                  isActive
+                    ? 'border-[#88c958] text-[#88c958]'
+                    : 'border-transparent text-slate-500 dark:text-slate-400 hover:text-slate-800 dark:hover:text-slate-200'
+                }`}
+              >
+                {tab.label}
+              </button>
+            );
+          })}
+        </div>
+
+        <div className="flex-1 overflow-y-auto p-6 space-y-6 bg-slate-50/40 dark:bg-[#08090a]">
+          {errorMessage && (
+            <div className="p-3.5 rounded-xl bg-rose-50 dark:bg-rose-950/40 border border-rose-200 dark:border-rose-500/30 text-rose-700 dark:text-rose-300 text-xs font-semibold flex items-center justify-between shadow-xs animate-in fade-in">
+              <span>⚠️ {errorMessage}</span>
+              <button
+                type="button"
+                onClick={() => setErrorMessage(null)}
+                className="text-rose-500 hover:text-rose-800 dark:hover:text-rose-200 font-bold ml-2 cursor-pointer"
+              >
+                ×
+              </button>
+            </div>
+          )}
+          {activeTab === 'general' && (
+            <div className="max-w-2xl space-y-5 animate-in fade-in duration-150">
+              <div>
+                <label className="block text-xs font-bold uppercase tracking-wider text-slate-700 dark:text-slate-300 mb-1.5">
+                  Session Title <span className="text-rose-500">*</span>
+                </label>
+                <input
+                  type="text"
+                  value={title}
+                  onChange={(e) => setTitle(e.target.value)}
+                  placeholder="e.g. Sprint 1 Retrospective"
+                  className="w-full px-4 py-2.5 bg-white dark:bg-[#12151c] border border-slate-200 dark:border-white/[0.08] rounded-xl text-sm text-slate-900 dark:text-white placeholder:text-slate-400 dark:placeholder:text-slate-500 focus:outline-none focus:ring-2 focus:ring-[#88c958]/30 focus:border-[#88c958] shadow-xs"
+                  required
+                />
+              </div>
+
+              <div>
+                <label className="block text-xs font-bold uppercase tracking-wider text-slate-700 dark:text-slate-300 mb-1.5">
+                  Description & Context
+                </label>
+                <textarea
+                  value={description}
+                  onChange={(e) => setDescription(e.target.value)}
+                  placeholder="Summarize the sprint focus, release notes, or objectives..."
+                  rows={3}
+                  className="w-full px-4 py-2.5 bg-white dark:bg-[#12151c] border border-slate-200 dark:border-white/[0.08] rounded-xl text-sm text-slate-900 dark:text-white placeholder:text-slate-400 dark:placeholder:text-slate-500 focus:outline-none focus:ring-2 focus:ring-[#88c958]/30 focus:border-[#88c958] shadow-xs resize-none"
+                />
+              </div>
+
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                <div>
+                  <label className="block text-xs font-bold uppercase tracking-wider text-slate-700 dark:text-slate-300 mb-1.5 flex items-center justify-between">
+                    <span>Starting Date <span className="text-rose-500">*</span></span>
+                    <span className="text-[10px] font-normal text-slate-400 dark:text-slate-500">(Present date)</span>
+                  </label>
+                  <div className="relative">
+                    <Calendar className="w-4 h-4 text-slate-400 absolute left-3.5 top-1/2 -translate-y-1/2 pointer-events-none" />
+                    <input
+                      type="date"
+                      value={startDate}
+                      min={!initialData ? todayStr : undefined}
+                      onChange={(e) => handleStartDateChange(e.target.value)}
+                      className={`w-full pl-10 pr-4 py-2.5 bg-white dark:bg-[#12151c] border rounded-xl text-sm text-slate-900 dark:text-white focus:outline-none focus:ring-2 shadow-xs cursor-pointer transition-colors ${
+                        dateValidation.field === 'startDate' || dateValidation.field === 'both'
+                          ? 'border-rose-500 focus:ring-rose-500/30 focus:border-rose-500'
+                          : 'border-slate-200 dark:border-white/[0.08] focus:ring-[#88c958]/30 focus:border-[#88c958]'
+                      }`}
+                      required
+                    />
+                  </div>
+                  {(dateValidation.field === 'startDate' || (dateValidation.field === 'both' && !startDate)) && (
+                    <p className="text-[11px] text-rose-500 font-medium mt-1 flex items-center gap-1 animate-in fade-in">
+                      <span>⚠️ {dateValidation.error}</span>
+                    </p>
+                  )}
+                </div>
+
+                <div>
+                  <label className="block text-xs font-bold uppercase tracking-wider text-slate-700 dark:text-slate-300 mb-1.5 flex items-center justify-between">
+                    <span>Ending Date <span className="text-rose-500">*</span></span>
+                    <span className="text-[10px] font-normal text-slate-400 dark:text-slate-500">(Defaults to month end: Jan 31, Feb 28, Nov 30)</span>
+                  </label>
+                  <div className="relative">
+                    <Calendar className="w-4 h-4 text-slate-400 absolute left-3.5 top-1/2 -translate-y-1/2 pointer-events-none" />
+                    <input
+                      type="date"
+                      value={endDate}
+                      min={startDate || todayStr}
+                      onChange={(e) => {
+                        setEndDate(e.target.value);
+                        setErrorMessage(null);
+                      }}
+                      className={`w-full pl-10 pr-4 py-2.5 bg-white dark:bg-[#12151c] border rounded-xl text-sm text-slate-900 dark:text-white focus:outline-none focus:ring-2 shadow-xs cursor-pointer transition-colors ${
+                        dateValidation.field === 'endDate' || dateValidation.field === 'both'
+                          ? 'border-rose-500 focus:ring-rose-500/30 focus:border-rose-500'
+                          : 'border-slate-200 dark:border-white/[0.08] focus:ring-[#88c958]/30 focus:border-[#88c958]'
+                      }`}
+                      required
+                    />
+                  </div>
+                  {(dateValidation.field === 'endDate' || (dateValidation.field === 'both' && !endDate)) && (
+                    <p className="text-[11px] text-rose-500 font-medium mt-1 flex items-center gap-1 animate-in fade-in">
+                      <span>⚠️ {dateValidation.error}</span>
+                    </p>
+                  )}
+                </div>
+              </div>
+            </div>
+          )}
+
+          {activeTab === 'topics' && (
+            <div className="space-y-6 animate-in fade-in duration-150">
+              <div className="p-4 rounded-xl bg-white dark:bg-[#0e1015] border border-slate-200/80 dark:border-white/[0.08] shadow-xs">
+                <div className="flex items-center justify-between mb-3">
+                  <span className="text-xs font-bold uppercase tracking-wider text-slate-600 dark:text-slate-400">
+                    Quick Presets (TeamRetro Templates):
+                  </span>
+                  <span className={`text-xs font-mono font-bold ${topics.length >= MAX_RETRO_TOPICS ? 'text-amber-500' : 'text-slate-500 dark:text-slate-400'}`}>
+                    Topic Columns: {topics.length}/{MAX_RETRO_TOPICS}
+                  </span>
+                </div>
+                <div className="flex flex-wrap gap-2.5">
+                  {TEMPLATE_PRESETS.map((preset) => {
+                    const Icon = preset.icon;
+                    return (
+                      <button
+                        key={preset.id}
+                        type="button"
+                        onClick={() => handleApplyPreset(preset)}
+                        className="inline-flex items-center gap-2 px-3 py-1.5 rounded-lg border border-slate-200 dark:border-white/[0.08] hover:border-[#88c958]/40 hover:bg-[#eaf5e3]/50 dark:hover:bg-[#88c958]/10 text-xs font-semibold text-slate-700 dark:text-slate-300 hover:text-[#3d8318] dark:hover:text-[#88c958] transition-all cursor-pointer shadow-2xs"
+                      >
+                        <Icon className="w-3.5 h-3.5 text-[#5cb028] dark:text-[#88c958]" />
+                        <span>{preset.name}</span>
+                      </button>
+                    );
+                  })}
+                </div>
+              </div>
+
+              <div className="space-y-3">
+                {topics.map((topic, index) => {
+                  const CurrentIcon =
+                    AVAILABLE_ICONS.find((i) => i.id === topic.icon)?.icon || Smile;
+                  const isDragging = draggedIndex === index;
+
+                  return (
+                    <div
+                      key={topic.topicId || index}
+                      draggable
+                      onDragStart={() => handleDragStart(index)}
+                      onDragOver={(e) => handleDragOver(e, index)}
+                      onDragEnd={handleDragEnd}
+                      className={`relative p-4 rounded-xl bg-white dark:bg-[#0e1015] border transition-all shadow-xs flex flex-col sm:flex-row items-start sm:items-center gap-3.5 ${
+                        isDragging
+                          ? 'border-[#88c958] ring-2 ring-[#88c958]/20 opacity-60 scale-[0.99]'
+                          : 'border-slate-200/90 dark:border-white/[0.08] hover:border-slate-300 dark:hover:border-white/[0.18]'
+                      }`}
+                    >
+                      <div className="flex items-center gap-1.5 cursor-grab active:cursor-grabbing text-slate-400 hover:text-slate-600 dark:hover:text-slate-300 shrink-0">
+                        <GripVertical className="w-5 h-5" />
+                        <span className="font-mono text-xs font-bold text-slate-400 w-4">
+                          {index + 1}
+                        </span>
+                      </div>
+
+                      <div className="relative shrink-0 flex items-center gap-1.5">
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setIconPickerIndex(iconPickerIndex === index ? null : index);
+                            setColorPickerIndex(null);
+                          }}
+                          title="Change Icon"
+                          style={{ backgroundColor: `${topic.color}15`, color: topic.color }}
+                          className="w-10 h-10 rounded-xl border border-transparent dark:border-white/[0.08] flex items-center justify-center font-bold text-sm shadow-2xs cursor-pointer hover:scale-105 transition-transform"
+                        >
+                          <CurrentIcon className="w-5 h-5" />
+                        </button>
+
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setColorPickerIndex(colorPickerIndex === index ? null : index);
+                            setIconPickerIndex(null);
+                          }}
+                          title="Change Color"
+                          style={{ backgroundColor: topic.color }}
+                          className="w-4 h-4 rounded-full border-2 border-white dark:border-[#0e1015] ring-1 ring-slate-200 dark:ring-white/[0.12] shadow-xs cursor-pointer hover:scale-110 transition-transform"
+                        />
+
+                        {colorPickerIndex === index && (
+                          <div className="absolute top-12 left-0 z-50 p-2.5 bg-white dark:bg-[#12151c] border border-slate-200 dark:border-white/[0.08] rounded-xl shadow-xl grid grid-cols-4 gap-2 w-36">
+                            {COLOR_PALETTE.map((c) => (
+                              <button
+                                key={c.hex}
+                                type="button"
+                                onClick={() => {
+                                  handleUpdateTopic(index, 'color', c.hex);
+                                  setColorPickerIndex(null);
+                                }}
+                                style={{ backgroundColor: c.hex }}
+                                className="w-6 h-6 rounded-lg cursor-pointer hover:scale-110 transition-transform flex items-center justify-center text-white"
+                              >
+                                {topic.color === c.hex && <Check className="w-3.5 h-3.5 stroke-[3]" />}
+                              </button>
+                            ))}
+                          </div>
+                        )}
+
+                        {iconPickerIndex === index && (
+                          <div className="absolute top-12 left-0 z-50 p-2.5 bg-white dark:bg-[#12151c] border border-slate-200 dark:border-white/[0.08] rounded-xl shadow-xl grid grid-cols-4 gap-2 w-44">
+                            {AVAILABLE_ICONS.map((i) => {
+                              const PopIcon = i.icon;
+                              return (
+                                <button
+                                  key={i.id}
+                                  type="button"
+                                  onClick={() => {
+                                    handleUpdateTopic(index, 'icon', i.id);
+                                    setIconPickerIndex(null);
+                                  }}
+                                  className="p-2 rounded-lg hover:bg-slate-100 dark:hover:bg-white/[0.08] text-slate-700 dark:text-slate-300 flex items-center justify-center cursor-pointer transition-colors"
+                                >
+                                  <PopIcon className="w-4 h-4" />
+                                </button>
+                              );
+                            })}
+                          </div>
+                        )}
+                      </div>
+
+                      <div className="flex-1 w-full space-y-1.5">
+                        <div className="flex items-center justify-between gap-2">
+                          <input
+                            type="text"
+                            value={topic.title}
+                            onChange={(e) => handleUpdateTopic(index, 'title', e.target.value)}
+                            placeholder="e.g. What went well?"
+                            className={`w-full font-bold text-xs text-slate-900 dark:text-white bg-transparent border-b px-1 py-0.5 focus:outline-none transition-colors ${
+                              topic.title.length > MAX_TOPIC_TITLE_LENGTH
+                                ? 'border-rose-500 text-rose-600 dark:text-rose-400 focus:border-rose-500'
+                                : !topic.title.trim()
+                                ? 'border-rose-400 dark:border-rose-500/60'
+                                : 'border-transparent hover:border-slate-200 dark:hover:border-white/[0.08] focus:border-[#88c958] dark:focus:border-[#88c958]'
+                            }`}
+                          />
+                          <span
+                            className={`text-[10px] font-mono shrink-0 transition-colors ${
+                              topic.title.length > MAX_TOPIC_TITLE_LENGTH
+                                ? 'text-rose-500 font-bold'
+                                : 'text-slate-400 dark:text-slate-500'
+                            }`}
+                          >
+                            {topic.title.length}/{MAX_TOPIC_TITLE_LENGTH}
+                          </span>
+                        </div>
+                        {topic.title.length > MAX_TOPIC_TITLE_LENGTH && (
+                          <p className="text-[11px] text-rose-500 font-medium flex items-center gap-1 animate-in fade-in">
+                            <span>Topic title cannot exceed {MAX_TOPIC_TITLE_LENGTH} characters (currently {topic.title.length})</span>
+                          </p>
+                        )}
+                        {!topic.title.trim() && (
+                          <p className="text-[11px] text-rose-500 font-medium flex items-center gap-1 animate-in fade-in">
+                            <span>Topic title cannot be blank</span>
+                          </p>
+                        )}
+                        <input
+                          type="text"
+                          value={topic.description}
+                          onChange={(e) =>
+                            handleUpdateTopic(index, 'description', e.target.value)
+                          }
+                          placeholder="Subtitle: Things we are proud of or happy about"
+                          className="w-full text-[11px] text-slate-500 dark:text-slate-400 bg-transparent border-b border-transparent hover:border-slate-200 dark:hover:border-white/[0.08] focus:border-[#88c958] dark:focus:border-[#88c958] focus:outline-none px-1 py-0.5"
+                        />
+                      </div>
+
+                      <div className="flex items-center gap-1 self-end sm:self-center shrink-0">
+                        <button
+                          type="button"
+                          onClick={() => handleMoveTopic(index, index - 1)}
+                          disabled={index === 0}
+                          title="Move Up"
+                          className="p-1 rounded-md text-slate-400 hover:text-slate-700 dark:hover:text-slate-200 hover:bg-slate-100 dark:hover:bg-white/[0.08] disabled:opacity-30 cursor-pointer"
+                        >
+                          <ChevronUp className="w-4 h-4" />
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => handleMoveTopic(index, index + 1)}
+                          disabled={index === topics.length - 1}
+                          title="Move Down"
+                          className="p-1 rounded-md text-slate-400 hover:text-slate-700 dark:hover:text-slate-200 hover:bg-slate-100 dark:hover:bg-white/[0.08] disabled:opacity-30 cursor-pointer"
+                        >
+                          <ChevronDown className="w-4 h-4" />
+                        </button>
+
+                        <button
+                          type="button"
+                          onClick={() => handleDeleteTopic(index)}
+                          disabled={topics.length <= MIN_RETRO_TOPICS}
+                          title={topics.length <= MIN_RETRO_TOPICS ? `Must keep at least ${MIN_RETRO_TOPICS} topic column` : 'Delete Column'}
+                          className="p-1.5 rounded-md text-slate-400 hover:text-rose-600 dark:hover:text-rose-400 hover:bg-rose-50 dark:hover:bg-rose-950/40 disabled:opacity-30 disabled:cursor-not-allowed transition-colors cursor-pointer"
+                        >
+                          <Trash2 className="w-4 h-4" />
+                        </button>
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+
+              <div className="flex flex-col items-center justify-center pt-2 gap-1.5">
+                <button
+                  type="button"
+                  onClick={handleAddTopic}
+                  disabled={topics.length >= MAX_RETRO_TOPICS}
+                  title={
+                    topics.length >= MAX_RETRO_TOPICS
+                      ? `Maximum ${MAX_RETRO_TOPICS} topic columns allowed`
+                      : 'Add New Topic Column'
+                  }
+                  className="group inline-flex items-center gap-2 px-5 py-2.5 rounded-full bg-white dark:bg-[#0e1015] hover:bg-[#eaf5e3] dark:hover:bg-[#88c958]/10 border-2 border-dashed border-[#cdeac0] dark:border-[#88c958]/40 hover:border-[#88c958] text-xs font-bold text-[#3d8318] dark:text-[#88c958] shadow-xs transition-all hover:scale-105 disabled:opacity-40 disabled:cursor-not-allowed disabled:hover:scale-100 cursor-pointer"
+                >
+                  <div className="w-5 h-5 rounded-full bg-[#5cb028] text-white dark:bg-[#88c958] dark:text-[#08090a] flex items-center justify-center text-xs group-hover:rotate-90 transition-transform">
+                    <Plus className="w-3.5 h-3.5 stroke-[3]" />
+                  </div>
+                  <span>
+                    {topics.length >= MAX_RETRO_TOPICS
+                      ? `Max Limit Reached (${MAX_RETRO_TOPICS}/${MAX_RETRO_TOPICS})`
+                      : `Add New Topic Column (${topics.length}/${MAX_RETRO_TOPICS})`}
+                  </span>
+                </button>
+                {topics.length >= MAX_RETRO_TOPICS && (
+                  <p className="text-[11px] text-slate-400 dark:text-slate-500">
+                    Retrospectives are limited to a maximum of {MAX_RETRO_TOPICS} topic columns.
+                  </p>
+                )}
+              </div>
+            </div>
+          )}
+        </div>
+
+        <div className="px-6 py-4 border-t border-slate-200 dark:border-white/[0.08] bg-white dark:bg-[#0e1015] flex items-center justify-between">
+          <button
+            type="button"
+            onClick={onClose}
+            className="px-5 py-2.5 rounded-xl border border-slate-200 dark:border-white/[0.08] text-xs font-semibold text-slate-600 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-white/[0.05] transition-colors cursor-pointer"
+          >
+            Cancel
+          </button>
+
+          <button
+            type="button"
+            onClick={handleSave}
+            disabled={isSubmitting || !isFormValid}
+            title={
+              activeMonthlyRetro
+                ? `Project already has an active retrospective for this month (${activeMonthlyRetro.title}). Company policy permits 1 retro per month.`
+                : !isFormValid
+                ? !title.trim()
+                  ? 'Please provide a session title'
+                  : !dateValidation.isValid
+                  ? dateValidation.error || 'Please provide valid starting and ending dates'
+                  : `Please ensure 1 to 6 topic columns with titles up to ${MAX_TOPIC_TITLE_LENGTH} characters`
+                : initialData ? 'Save Changes' : 'Create & Open Board'
+            }
+            className="px-6 py-2.5 rounded-xl bg-[#5cb028] hover:bg-[#4e9921] text-white text-xs font-bold shadow-md shadow-[#5cb028]/25 disabled:opacity-40 disabled:cursor-not-allowed disabled:hover:scale-100 transition-all hover:scale-[1.02] cursor-pointer dark:bg-[#88c958] dark:hover:bg-[#96dc63] dark:text-[#08090a]"
+          >
+            {isSubmitting ? 'Saving...' : initialData ? 'Save Changes' : activeMonthlyRetro ? 'Monthly Limit Reached' : 'Create & Open Board →'}
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+
+  return createPortal(modalContent, document.body);
+};
+

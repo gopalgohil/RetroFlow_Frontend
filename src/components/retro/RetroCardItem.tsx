@@ -1,0 +1,404 @@
+'use client';
+
+import React, { useState, memo } from 'react';
+import { Pencil, Trash2, Check, X, ThumbsUp, GripVertical, Zap, User } from 'lucide-react';
+import { StickyCard } from '@/types/retro';
+
+export interface RetroCardItemProps {
+  card: StickyCard;
+  topicColor: string;
+  isRevealed: boolean;
+  canEdit: boolean;
+  canDelete: boolean;
+  isCurrentAuthor: boolean;
+  currentAuthorName?: string;
+  remainingVotes: number;
+  canMoveCrossColumn?: boolean;
+  isFirstCard?: boolean;
+  isDragTarget?: boolean;
+  dropPosition?: 'above' | 'below' | null;
+  onVote: (cardId: string) => void;
+  onUpdate: (cardId: string, text: string) => void;
+  onDelete: (cardId: string) => void;
+  onMoveToActions?: (cardId: string) => void;
+  onCardDragStart?: (cardId: string, e: React.DragEvent) => void;
+  onCardDragEnd?: () => void;
+  onCardDragOver?: (cardId: string, e: React.DragEvent) => void;
+  onCardDragLeave?: (cardId: string, e: React.DragEvent) => void;
+  onCardDrop?: (cardId: string, e: React.DragEvent) => void;
+}
+
+export const RetroCardItem: React.FC<RetroCardItemProps> = memo(function RetroCardItem({
+  card,
+  topicColor,
+  isRevealed,
+  canEdit,
+  canDelete,
+  isCurrentAuthor,
+  currentAuthorName,
+  remainingVotes,
+  canMoveCrossColumn = true,
+  isFirstCard = false,
+  isDragTarget = false,
+  dropPosition = null,
+  onVote,
+  onUpdate,
+  onDelete,
+  onMoveToActions,
+  onCardDragStart,
+  onCardDragEnd,
+  onCardDragOver,
+  onCardDragLeave,
+  onCardDrop,
+}) {
+  const [isEditing, setIsEditing] = useState(false);
+  const [editText, setEditText] = useState(card.text);
+  const [isDragging, setIsDragging] = useState(false);
+  const [isConfirmingDelete, setIsConfirmingDelete] = useState(false);
+
+  const handleStartEdit = () => {
+    setEditText(card.text);
+    setIsEditing(true);
+  };
+
+  const handleCancelEdit = () => {
+    setEditText(card.text);
+    setIsEditing(false);
+  };
+
+  const handleSaveEdit = () => {
+    const trimmed = editText.trim();
+    if (!trimmed) return;
+    onUpdate(card.id, trimmed);
+    setIsEditing(false);
+  };
+
+  const canInteract = card.hasVoted || remainingVotes > 0;
+  const isCardAssigned = Boolean(
+    card.assignedTo?.name ||
+    card.isExportedToActionItems ||
+    (card as any).assignedSprintName
+  );
+  const effectiveCanEdit = canEdit && !isCardAssigned;
+  const effectiveCanDelete = canDelete && !isCardAssigned;
+  const effectiveMoveToActions = isCardAssigned ? undefined : onMoveToActions;
+  const effectiveCanMoveCrossColumn = Boolean(canMoveCrossColumn && !isCardAssigned);
+
+  return (
+    <div
+      draggable={!isEditing && Boolean(effectiveCanMoveCrossColumn)}
+      onDragStart={(e) => {
+        if (isEditing || !effectiveCanMoveCrossColumn) {
+          e.preventDefault();
+          return;
+        }
+        setIsDragging(true);
+        if (onCardDragStart) {
+          onCardDragStart(card.id, e);
+        } else {
+          e.dataTransfer.setData('text/plain', card.id);
+          e.dataTransfer.setData(
+            'application/json',
+            JSON.stringify({ cardId: card.id, topicId: card.topicId })
+          );
+          e.dataTransfer.effectAllowed = 'move';
+        }
+      }}
+      onDragEnd={() => {
+        setIsDragging(false);
+        onCardDragEnd?.();
+      }}
+      onDragOver={(e) => {
+        if (canMoveCrossColumn) onCardDragOver?.(card.id, e);
+      }}
+      onDragLeave={(e) => {
+        if (canMoveCrossColumn) onCardDragLeave?.(card.id, e);
+      }}
+      onDrop={(e) => {
+        if (canMoveCrossColumn) onCardDrop?.(card.id, e);
+      }}
+      style={{
+        backgroundColor: `${topicColor}08`,
+        borderColor: `${topicColor}30`,
+        borderLeftColor: topicColor,
+      }}
+      className={`group relative p-2.5 rounded-xl border border-l-[3.5px] shadow-2xs hover:shadow-xs transition-all space-y-2 hover:z-30 dark:bg-[#12151c] dark:border-white/[0.08] ${
+        effectiveCanMoveCrossColumn ? 'cursor-grab active:cursor-grabbing' : 'cursor-default'
+      } ${
+        isCardAssigned ? 'border-dashed' : ''
+      } ${
+        isDragging ? 'opacity-40 ring-1 ring-[#88c958]/40' : ''
+      } ${
+        !isRevealed ? 'filter blur-xs select-none' : ''
+      }`}
+    >
+      {isDragTarget && dropPosition === 'above' && (
+        <div className="absolute -top-1 left-1.5 right-1.5 h-[2.5px] rounded-full bg-[#88c958] shadow-[0_0_6px_rgba(136,201,88,0.8)] z-30 pointer-events-none animate-pulse" />
+      )}
+      {isDragTarget && dropPosition === 'below' && (
+        <div className="absolute -bottom-1 left-1.5 right-1.5 h-[2.5px] rounded-full bg-[#88c958] shadow-[0_0_6px_rgba(136,201,88,0.8)] z-30 pointer-events-none animate-pulse" />
+      )}
+      {isEditing ? (
+        <div className="space-y-2 animate-in fade-in duration-150">
+          <textarea
+            autoFocus
+            rows={2}
+            value={editText}
+            onChange={(e) => setEditText(e.target.value)}
+            onKeyDown={(e) => {
+              if (e.key === 'Enter' && !e.shiftKey) {
+                e.preventDefault();
+                handleSaveEdit();
+              } else if (e.key === 'Escape') {
+                handleCancelEdit();
+              }
+            }}
+            className="w-full text-sm text-slate-800 dark:text-slate-100 p-2 rounded-lg border border-[#88c958] bg-white dark:bg-[#141720] focus:outline-none focus:ring-1 focus:ring-[#88c958] resize-none shadow-inner"
+            placeholder="Update your feedback..."
+          />
+          <div className="flex items-center justify-end gap-1.5">
+            <button
+              type="button"
+              onClick={handleCancelEdit}
+              className="px-2.5 py-1 rounded text-xs font-medium text-slate-500 dark:text-slate-400 hover:bg-slate-200 dark:hover:bg-white/[0.08] transition-colors cursor-pointer"
+            >
+              Cancel
+            </button>
+            <button
+              type="button"
+              onClick={handleSaveEdit}
+              className="inline-flex items-center gap-1 px-3 py-1 rounded bg-[#5cb028] hover:bg-[#4e9921] text-white text-xs font-bold shadow-xs cursor-pointer transition-colors dark:bg-[#88c958] dark:hover:bg-[#76b846] dark:text-[#08090a]"
+            >
+              <Check className="w-3.5 h-3.5" />
+              <span>Save</span>
+            </button>
+          </div>
+        </div>
+      ) : (
+        <>
+          <div className="flex items-center justify-between gap-1">
+            <div className="relative group/vote-popover">
+              <button
+                type="button"
+                onClick={() => onVote(card.id)}
+                title={
+                  card.hasVoted
+                    ? 'You voted for this thought. Click to unlike'
+                    : 'Click to vote for this thought (1 vote per card)'
+                }
+                style={{
+                  color: card.hasVoted ? '#ffffff' : topicColor,
+                  backgroundColor: card.hasVoted ? topicColor : `${topicColor}15`,
+                  borderColor: card.hasVoted ? topicColor : `${topicColor}30`,
+                }}
+                className="inline-flex items-center gap-1.5 px-2 py-0.5 rounded-md text-[10px] font-bold border transition-all shadow-2xs hover:scale-105 active:scale-95 cursor-pointer"
+              >
+                <ThumbsUp className={`w-3 h-3 ${card.hasVoted ? 'fill-current' : ''}`} />
+                <span>{card.votes || 0}</span>
+              </button>
+
+              <div
+                className={`absolute left-0 ${
+                  isFirstCard ? 'top-full mt-1.5' : 'bottom-full mb-2'
+                } hidden group-hover/vote-popover:flex flex-col z-50 bg-white dark:bg-[#0e1015] rounded-xl shadow-xl border border-slate-200/90 dark:border-white/[0.08] p-2.5 min-w-[160px] max-w-[240px] pointer-events-auto animate-in fade-in zoom-in-95 duration-150`}
+              >
+                {isFirstCard ? (
+                  <div className="absolute -top-1 left-3 w-2 h-2 bg-white dark:bg-[#0e1015] border-t border-l border-slate-200 dark:border-white/[0.08] rotate-45" />
+                ) : (
+                  <div className="absolute -bottom-1 left-3 w-2 h-2 bg-white dark:bg-[#0e1015] border-b border-r border-slate-200 dark:border-white/[0.08] rotate-45" />
+                )}
+                <div className="text-[10px] font-bold text-slate-400 dark:text-slate-500 uppercase tracking-wider pb-1.5 mb-1.5 border-b border-slate-100 dark:border-white/[0.08] flex items-center justify-between">
+                  <span className="flex items-center gap-1">
+                    <ThumbsUp className="w-3 h-3 text-[#88c958]" />
+                    <span>Votes</span>
+                  </span>
+                  <span className="font-extrabold text-[#3d8318] dark:text-[#88c958] bg-[#eaf5e3] dark:bg-[#88c958]/20 px-1.5 py-0.2 rounded-full text-[9px]">
+                    {card.votes || 0}
+                  </span>
+                </div>
+
+                {card.voters && card.voters.length > 0 ? (
+                  <div className="space-y-1.5 max-h-36 overflow-y-auto pr-0.5">
+                    {card.voters.map((voter, idx) => {
+                      const cleanName = voter.trim();
+                      const initials =
+                        cleanName.length > 3 ? cleanName.slice(0, 3) : cleanName;
+                      const isMe =
+                        currentAuthorName &&
+                        cleanName.toLowerCase() === currentAuthorName.toLowerCase();
+
+                      const bgGradients = [
+                        'from-[#88c958] to-[#6da742]',
+                        'from-sky-500 to-blue-600',
+                        'from-emerald-500 to-teal-600',
+                        'from-amber-500 to-orange-600',
+                        'from-rose-500 to-pink-600',
+                      ];
+                      const gradientClass = bgGradients[idx % bgGradients.length];
+
+                      return (
+                        <div key={idx} className="flex items-center gap-2">
+                          <div
+                            className={`w-6 h-6 rounded-full bg-gradient-to-tr ${gradientClass} text-white flex items-center justify-center font-bold text-[9px] shrink-0 shadow-2xs capitalize`}
+                          >
+                            {initials}
+                          </div>
+                          <span className="text-xs font-semibold text-slate-700 dark:text-slate-200 truncate">
+                            {cleanName}
+                            {isMe && (
+                              <span className="text-[10px] text-[#3d8318] dark:text-[#88c958] font-bold ml-1">
+                                (You)
+                              </span>
+                            )}
+                          </span>
+                        </div>
+                      );
+                    })}
+                  </div>
+                ) : (
+                  <div className="text-[11px] text-slate-400 dark:text-slate-500 py-1 italic">
+                    No votes yet. Click thumb to vote!
+                  </div>
+                )}
+
+                {card.hasVoted && (
+                  <div className="mt-2 pt-1.5 border-t border-slate-100 dark:border-white/[0.08] text-[10px] font-semibold text-emerald-600 dark:text-emerald-400 flex items-center justify-between">
+                    <div className="flex items-center gap-1">
+                      <Check className="w-3 h-3" />
+                      <span>You liked this</span>
+                    </div>
+                    <span className="text-[9px] text-slate-400 dark:text-slate-500 font-normal">Click to unlike</span>
+                  </div>
+                )}
+              </div>
+            </div>
+
+            <div className="flex items-center gap-1 shrink-0">
+              {effectiveMoveToActions && (
+                <button
+                  type="button"
+                  onClick={() => effectiveMoveToActions(card.id)}
+                  title="Promote to Action Items"
+                  className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[10px] font-bold text-amber-700 dark:text-amber-400 hover:text-amber-800 dark:hover:text-amber-300 bg-amber-50 dark:bg-amber-950/40 hover:bg-amber-100/90 dark:hover:bg-amber-900/50 border border-amber-200/80 dark:border-amber-800/60 transition-all hover:scale-[1.03] active:scale-95 cursor-pointer shadow-2xs"
+                >
+                  <Zap className="w-2.5 h-2.5 fill-amber-500 text-amber-500" />
+                  <span className="hidden sm:inline">To Action</span>
+                </button>
+              )}
+
+              {canMoveCrossColumn && (
+                isCardAssigned ? (
+                  <div
+                    className="text-slate-300 dark:text-slate-600 p-0.5 rounded cursor-not-allowed opacity-30 select-none"
+                    title="Assigned/Exported tasks are locked in sprint and cannot be moved across columns"
+                  >
+                    <GripVertical className="w-3.5 h-3.5" />
+                  </div>
+                ) : (
+                  <div
+                    className="text-slate-300 dark:text-slate-600 group-hover:text-slate-500 dark:group-hover:text-slate-400 hover:text-[#88c958] dark:hover:text-[#88c958] transition-colors cursor-grab active:cursor-grabbing p-0.5 rounded hover:bg-black/5 dark:hover:bg-white/5"
+                    title="Drag to reorder card or move across questions"
+                  >
+                    <GripVertical className="w-3.5 h-3.5" />
+                  </div>
+                )
+              )}
+
+              {(effectiveCanEdit || effectiveCanDelete) && (
+                <div className="flex items-center gap-0.5">
+                  {effectiveCanEdit && (
+                    <button
+                      onClick={handleStartEdit}
+                      title="Edit your thought"
+                      className="p-1 rounded text-slate-400 dark:text-slate-500 hover:text-[#3d8318] dark:hover:text-[#88c958] hover:bg-[#eaf5e3] dark:hover:bg-[#88c958]/20 transition-colors cursor-pointer"
+                    >
+                      <Pencil className="w-3 h-3" />
+                    </button>
+                  )}
+                  {effectiveCanDelete && (
+                    isConfirmingDelete ? (
+                      <div className="inline-flex items-center gap-1 bg-rose-50 dark:bg-rose-950/80 border border-rose-200 dark:border-rose-800/80 rounded-md px-1.5 py-0.5 animate-in fade-in zoom-in-95 duration-100 z-10 shadow-xs">
+                        <span className="text-[10px] font-bold text-rose-700 dark:text-rose-300">Delete?</span>
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setIsConfirmingDelete(false);
+                            onDelete(card.id);
+                          }}
+                          className="px-1.5 py-0.5 rounded bg-rose-600 hover:bg-rose-700 text-white text-[9px] font-bold transition-colors cursor-pointer"
+                          title="Confirm deletion"
+                        >
+                          Yes
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => setIsConfirmingDelete(false)}
+                          className="p-0.5 rounded text-slate-500 hover:text-slate-700 dark:text-slate-400 dark:hover:text-slate-200 transition-colors cursor-pointer"
+                          title="Cancel"
+                        >
+                          <X className="w-2.5 h-2.5" />
+                        </button>
+                      </div>
+                    ) : (
+                      <button
+                        type="button"
+                        onClick={() => setIsConfirmingDelete(true)}
+                        title={canEdit ? 'Delete your thought' : 'Moderate / Delete thought'}
+                        className="p-1 rounded text-slate-400 dark:text-slate-500 hover:text-rose-600 dark:hover:text-rose-400 hover:bg-rose-50 dark:hover:bg-rose-950/30 transition-colors cursor-pointer"
+                      >
+                        <Trash2 className="w-3 h-3" />
+                      </button>
+                    )
+                  )}
+                </div>
+              )}
+            </div>
+          </div>
+
+          <p className="text-sm text-slate-800 dark:text-slate-100 leading-relaxed break-words font-medium py-1">
+            {card.text}
+          </p>
+
+          {card.assignedTo?.name && (
+            <div
+              title={`Already assigned to ${card.assignedTo.name}. It cannot be reassigned.`}
+              className="flex items-center gap-1.5 px-2.5 py-1 rounded-lg bg-emerald-50 dark:bg-emerald-950/40 border border-emerald-200 dark:border-emerald-800/60 text-xs font-bold text-emerald-700 dark:text-emerald-400 select-none shadow-2xs"
+            >
+              <Check className="w-3.5 h-3.5 text-emerald-600 dark:text-emerald-400 shrink-0" />
+              <span className="truncate">
+                Assigned to: <strong className="font-extrabold">{card.assignedTo.name}</strong>
+                {card.assignedSprintName ? ` (${card.assignedSprintName})` : ''}
+              </span>
+            </div>
+          )}
+
+          <div className="opacity-0 group-hover:opacity-100 transition-opacity duration-200 pt-1.5 border-t border-slate-200/40 dark:border-white/[0.08] flex items-center justify-between text-[10px] text-slate-500 dark:text-slate-400 gap-2">
+            <div className="flex items-center gap-1.5 min-w-0">
+              <div className="w-4 h-4 rounded-full bg-slate-200 dark:bg-[#141720] text-slate-700 dark:text-slate-300 flex items-center justify-center font-bold text-[8px] uppercase shrink-0">
+                {card.author ? card.author.slice(0, 2) : 'RF'}
+              </div>
+              <span className="truncate font-medium">by {card.author}</span>
+            </div>
+
+            {card.assignedTo?.name ? (
+              <div
+                className="flex items-center gap-1 font-bold text-[#3d8318] dark:text-[#88c958] bg-[#eaf5e3] dark:bg-[#88c958]/15 px-1.5 py-0.5 rounded border border-[#cdeac0] dark:border-[#88c958]/30 shrink-0 select-none"
+                title={`Assigned to: ${card.assignedTo.name}${card.assignedSprintName ? ` (${card.assignedSprintName})` : ''}`}
+              >
+                <User className="w-2.5 h-2.5 shrink-0" />
+                <span className="truncate max-w-[120px]">Assigned: {card.assignedTo.name}</span>
+              </div>
+            ) : isCurrentAuthor ? (
+              <span className="text-[9px] font-bold text-[#3d8318] dark:text-[#88c958] bg-[#eaf5e3] dark:bg-[#88c958]/15 px-1.5 py-0.2 rounded border border-[#cdeac0] dark:border-[#88c958]/30 shrink-0">
+                You
+              </span>
+            ) : null}
+          </div>
+        </>
+      )}
+    </div>
+  );
+});
+
+export default RetroCardItem;
+

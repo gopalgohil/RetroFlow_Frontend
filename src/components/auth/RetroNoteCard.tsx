@@ -1,0 +1,54 @@
+'use client';
+
+import React from 'react';
+
+export interface RetroNoteCardProps {
+  categoryTitle: string;
+  categoryVariant?: 'success' | 'danger' | 'warning';
+  content: string;
+  author: string;
+  upvotes?: number;
+  className?: string;
+}
+
+export const RetroNoteCard: React.FC<RetroNoteCardProps> = ({
+  categoryTitle,
+  categoryVariant = 'success',
+  content,
+  author,
+  upvotes,
+  className = '',
+}) => {
+  const dotColor = {
+    success: 'bg-emerald-500',
+    danger: 'bg-rose-500',
+    warning: 'bg-amber-500',
+  }[categoryVariant];
+
+  return (
+    <div className={`space-y-3 ${className}`}>
+      <div className="flex items-center gap-2 text-xs font-semibold text-slate-700">
+        <span className={`w-2 h-2 rounded-full ${dotColor}`} />
+        <span>{categoryTitle}</span>
+      </div>
+
+      <div className="rounded-xl bg-slate-50/90 dark:bg-[#12151c] border border-slate-200/70 dark:border-white/[0.08] p-3.5 space-y-2 hover:border-slate-300 dark:hover:border-white/20 hover:shadow-sm transition-all">
+        <p className="text-xs leading-relaxed text-slate-700 dark:text-slate-200 font-normal">
+          {content}
+        </p>
+
+        <div className="flex items-center justify-between pt-1">
+          <span className="text-[11px] text-slate-400 dark:text-slate-500 font-medium">
+            — {author}
+          </span>
+          {typeof upvotes === 'number' && (
+            <div className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md bg-[#88c958]/15 border border-[#88c958]/30 shadow-2xs text-[11px] font-semibold text-[#88c958] select-none">
+              <span>👍</span>
+              <span>{upvotes}</span>
+            </div>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+};

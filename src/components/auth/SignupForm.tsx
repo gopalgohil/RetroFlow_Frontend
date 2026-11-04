@@ -1,0 +1,284 @@
+'use client';
+
+import React, { useState } from 'react';
+import { useRouter } from 'next/navigation';
+import Link from 'next/link';
+import { Input, Button, Checkbox, Alert } from '@/components/ui';
+import { AuthHeader, SocialButton, AuthDivider, AuthFooterLink } from '@/components/auth';
+import { signupSchema, SignupFormData } from '@/lib/validations/auth';
+import { api, ENDPOINTS } from '@/lib/api';
+
+export interface SignupFormProps {
+  onSubmit?: (data: SignupFormData) => Promise<void> | void;
+  onGoogleSignUp?: () => void;
+}
+
+export const SignupForm: React.FC<SignupFormProps> = ({ onSubmit, onGoogleSignUp }) => {
+  const router = useRouter();
+  const [formData, setFormData] = useState({
+    fullName: '',
+    email: '',
+    password: '',
+    confirmPassword: '',
+    agreedToTerms: false,
+  });
+
+  const [fieldErrors, setFieldErrors] = useState<Record<string, string>>({});
+  const [generalError, setGeneralError] = useState<string | null>(null);
+  const [isSuccess, setIsSuccess] = useState(false);
+  const [isLoading, setIsLoading] = useState(false);
+
+  const handleInputChange = (field: string, value: any) => {
+    setFormData((prev) => ({ ...prev, [field]: value }));
+    if (fieldErrors[field]) {
+      setFieldErrors((prev) => {
+        const updated = { ...prev };
+        delete updated[field];
+        return updated;
+      });
+    }
+    if (generalError) setGeneralError(null);
+  };
+
+  const handleSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setFieldErrors({});
+    setGeneralError(null);
+
+    const validationResult = signupSchema.safeParse(formData);
+
+    if (!validationResult.success) {
+      const errors: Record<string, string> = {};
+      validationResult.error.issues.forEach((issue) => {
+        const fieldName = issue.path[0] as string;
+        if (fieldName && !errors[fieldName]) {
+          errors[fieldName] = issue.message;
+        }
+      });
+      setFieldErrors(errors);
+      return;
+    }
+
+    setIsLoading(true);
+    try {
+      if (onSubmit) {
+        await onSubmit(validationResult.data);
+      } else {
+        await api.post(ENDPOINTS.AUTH.REGISTER, {
+          name: validationResult.data.fullName,
+          email: validationResult.data.email,
+          password: validationResult.data.password,
+        });
+
+        setIsSuccess(true);
+
+        setTimeout(() => {
+          router.push(`/verify-email?email=${encodeURIComponent(validationResult.data.email)}`);
+        }, 1000);
+      }
+    } catch (err: any) {
+      setGeneralError(err.message || 'Something went wrong. Please try again.');
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
+  const handleGoogleSignUp = async () => {
+    if (onGoogleSignUp) {
+      onGoogleSignUp();
+      return;
+    }
+
+    setGeneralError(null);
+    setFieldErrors({});
+    setIsLoading(true);
+
+    try {
+      const { signInWithPopup } = await import('firebase/auth');
+      const { auth, googleProvider } = await import('@/lib/firebase');
+
+      const result = await signInWithPopup(auth, googleProvider);
+      const user = result.user;
+      const idToken = await user.getIdToken();
+
+      const response = await api.post(ENDPOINTS.AUTH.GOOGLE, {
+        token: idToken,
+        email: user.email,
+        name: user.displayName,
+        avatar: user.photoURL,
+        googleId: user.uid,
+      });
+
+      try {
+        localStorage.removeItem('retroflow_cached_active_project');
+        localStorage.removeItem('retroflow_active_project_id');
+        localStorage.removeItem('retroflow_cached_projects_list');
+      } catch {}
+
+      if (response.data?.token) {
+        localStorage.setItem('retroflow_token', response.data.token);
+        localStorage.removeItem('retroflow_rejected');
+        document.cookie = `retroflow_token=${encodeURIComponent(response.data.token)}; path=/; max-age=2592000; SameSite=Lax`;
+        document.cookie = 'retroflow_rejected=; path=/; max-age=0; SameSite=Lax';
+      }
+      if (response.data?.user) {
+        const uStr = JSON.stringify(response.data.user);
+        localStorage.setItem('retroflow_user', uStr);
+        localStorage.removeItem('retroflow_rejected');
+        document.cookie = `retroflow_user=${encodeURIComponent(uStr)}; path=/; max-age=2592000; SameSite=Lax`;
+        document.cookie = 'retroflow_rejected=; path=/; max-age=0; SameSite=Lax';
+      }
+
+      sessionStorage.setItem('retroflow_welcome_toast', 'true');
+      router.push('/dashboard');
+    } catch (err: any) {
+      setIsLoading(false);
+      console.error('Google Sign-up Error:', err);
+
+      if (err.code === 'auth/popup-closed-by-user') {
+        return;
+      }
+      if (err.code === 'auth/operation-not-allowed') {
+        setGeneralError(
+          'Google Sign-In is not enabled yet in your Firebase Console. Please go to Authentication > Sign-in method and enable Google.'
+        );
+        return;
+      }
+      if (err.code === 'auth/unauthorized-domain') {
+        setGeneralError(
+          'This domain is not authorized in Firebase Console. Add localhost to Authorized domains under Authentication > Settings.'
+        );
+        return;
+      }
+
+      setGeneralError(err.message || 'Google sign-up failed. Please try again.');
+    }
+  };
+
+  return (
+    <div className="w-full max-w-md mx-auto space-y-3.5">
+      <AuthHeader
+        title="Create an account"
+        subtitle="Start running retrospectives with your team"
+      />
+
+      {generalError && <Alert variant="error" message={generalError} />}
+      {isSuccess && (
+        <Alert variant="success">
+          Account created successfully!{' '}
+          <Link href="/login" className="font-bold underline">
+            Click here to sign in
+          </Link>
+          .
+        </Alert>
+      )}
+
+      <form onSubmit={handleSubmit} className="space-y-2.5" noValidate>
+        <Input
+          label="Full Name"
+          type="text"
+          name="fullName"
+          placeholder="Sarah Miller"
+          value={formData.fullName}
+          onChange={(e) => handleInputChange('fullName', e.target.value)}
+          error={fieldErrors.fullName}
+          required
+          autoComplete="name"
+        />
+
+        <Input
+          label="Email"
+          type="email"
+          name="email"
+          placeholder="name@example.com"
+          value={formData.email}
+          onChange={(e) => handleInputChange('email', e.target.value)}
+          error={fieldErrors.email}
+          required
+          autoComplete="email"
+        />
+
+        <Input
+          label="Password"
+          type="password"
+          name="password"
+          placeholder="Create a password"
+          value={formData.password}
+          onChange={(e) => handleInputChange('password', e.target.value)}
+          onCopy={(e) => e.preventDefault()}
+          onCut={(e) => e.preventDefault()}
+          error={fieldErrors.password}
+          required
+          autoComplete="new-password"
+        />
+
+        <Input
+          label="Confirm Password"
+          type="password"
+          name="confirmPassword"
+          placeholder="Re-enter your password"
+          value={formData.confirmPassword}
+          onChange={(e) => handleInputChange('confirmPassword', e.target.value)}
+          onPaste={(e) => {
+            e.preventDefault();
+            setFieldErrors((prev) => ({
+              ...prev,
+              confirmPassword: 'Copy-paste is disabled. Please type your password manually.',
+            }));
+          }}
+          onDrop={(e) => e.preventDefault()}
+          error={fieldErrors.confirmPassword}
+          required
+          autoComplete="new-password"
+        />
+
+        <div className="pt-0.5">
+          <Checkbox
+            checked={formData.agreedToTerms}
+            onChange={(e) => handleInputChange('agreedToTerms', e.target.checked)}
+            error={fieldErrors.agreedToTerms}
+            label={
+              <span className="text-xs text-slate-600 dark:text-slate-300">
+                I agree to the{' '}
+                <a href="#" className="font-semibold text-[#88c958] hover:underline">
+                  Terms of Service
+                </a>{' '}
+                and{' '}
+                <a href="#" className="font-semibold text-[#88c958] hover:underline">
+                  Privacy Policy
+                </a>
+                .
+              </span>
+            }
+          />
+        </div>
+
+        <Button
+          type="submit"
+          variant="primary"
+          isLoading={isLoading}
+          className="w-full py-2.5 text-sm font-semibold rounded-xl mt-1 shadow-sm shadow-[#88c958]/20"
+        >
+          Create Account
+        </Button>
+      </form>
+
+      <AuthDivider label="Or continue with" className="my-2" />
+
+      <SocialButton
+        provider="google"
+        label="Sign up with Google"
+        onClick={handleGoogleSignUp}
+        disabled={isLoading}
+        className="py-2"
+      />
+
+      <AuthFooterLink
+        prompt="Already have an account?"
+        actionText="Sign in"
+        href="/login"
+        className="pt-0.5"
+      />
+    </div>
+  );
+};

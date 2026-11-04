@@ -1,0 +1,815 @@
+'use client';
+
+import React, { useState, useEffect, useRef } from 'react';
+import {
+  Users,
+  UserCheck,
+  Trash2,
+  Search,
+  Loader2,
+  X,
+  ChevronLeft,
+  ChevronRight,
+  ChevronDown,
+  Check,
+  FolderKanban,
+  AlertTriangle,
+  Clock,
+} from 'lucide-react';
+import { TeamMember, PaginationMeta } from '@/types/retro';
+import { useDebounce } from '@/hooks/useDebounce';
+import { UserAvatar, StatusPill } from '@/components/ui';
+import { Modal } from '@/components/ui/Modal';
+import { MemberDetailModal } from '@/components/dashboard/MemberDetailModal';
+import { MembersSkeleton } from '@/components/dashboard/DashboardSkeletons';
+
+interface MembersTabProps {
+  members: TeamMember[];
+  pendingRequests?: TeamMember[];
+  pagination?: PaginationMeta;
+  currentPage?: number;
+  currentLimit?: number;
+  searchQuery?: string;
+  isLoading: boolean;
+  onRefresh: () => void;
+  onPageChange?: (newPage: number) => void;
+  onLimitChange?: (newLimit: number) => void;
+  onSearchChange?: (newQuery: string) => void;
+  onWhitelistAdded: (email: string) => Promise<void>;
+  onRemoveMember?: (email: string) => Promise<void>;
+  onUpdateMemberRole?: (email: string, role: string) => Promise<void>;
+  onApproveMember?: (email: string, role: string) => Promise<void>;
+  onRejectMember?: (email: string) => Promise<void>;
+  currentEmail?: string;
+  isAdmin?: boolean;
+}
+
+const ROLE_OPTIONS = ['Developer', 'QA', 'Manager', 'DevOps', 'Project Lead'];
+
+interface MemberRoleDropdownProps {
+  email: string;
+  currentRole?: string;
+  onSelect: (email: string, role: string) => void;
+  isUpdating: boolean;
+  rowIndex: number;
+  totalRows: number;
+}
+
+const MemberRoleDropdown: React.FC<MemberRoleDropdownProps> = ({
+  email,
+  currentRole,
+  onSelect,
+  isUpdating,
+  rowIndex,
+  totalRows,
+}) => {
+  const [isOpen, setIsOpen] = useState(false);
+  const dropdownRef = useRef<HTMLDivElement>(null);
+
+  const normalizedRole =
+    currentRole === 'QA Specialist' || currentRole === 'QA'
+      ? 'QA'
+      : currentRole && currentRole !== 'Unassigned'
+      ? currentRole
+      : 'Developer';
+
+  useEffect(() => {
+    const handleClickOutside = (e: MouseEvent) => {
+      if (dropdownRef.current && !dropdownRef.current.contains(e.target as Node)) {
+        setIsOpen(false);
+      }
+    };
+    if (isOpen) {
+      document.addEventListener('mousedown', handleClickOutside);
+    }
+    return () => {
+      document.removeEventListener('mousedown', handleClickOutside);
+    };
+  }, [isOpen]);
+
+  const openUpward = totalRows > 3 && rowIndex >= totalRows - 2;
+
+  return (
+    <div className="relative inline-block text-left" ref={dropdownRef}>
+      <button
+        type="button"
+        disabled={isUpdating}
+        onClick={() => setIsOpen((prev) => !prev)}
+        className="inline-flex items-center justify-between gap-2 px-3 py-1.5 bg-white dark:bg-[#12151c] border border-slate-200 dark:border-white/[0.08] hover:border-slate-300 dark:hover:border-white/[0.18] rounded-xl text-xs font-semibold text-slate-800 dark:text-slate-200 focus:outline-none focus:ring-2 focus:ring-[#88c958]/20 focus:border-[#88c958] transition-all cursor-pointer shadow-2xs disabled:opacity-50 min-w-[110px]"
+        title="Assign project role"
+      >
+        <span>{normalizedRole}</span>
+        {isUpdating ? (
+          <Loader2 className="w-3.5 h-3.5 text-[#88c958] animate-spin" />
+        ) : (
+          <ChevronDown
+            className={`w-3.5 h-3.5 text-slate-400 dark:text-slate-500 transition-transform duration-200 ${
+              isOpen ? 'rotate-180' : ''
+            }`}
+          />
+        )}
+      </button>
+
+      {isOpen && (
+        <div
+          className={`absolute left-0 ${
+            openUpward ? 'bottom-full mb-1.5' : 'top-full mt-1.5'
+          } z-50 w-36 rounded-2xl bg-white dark:bg-[#12151c] border border-slate-200 dark:border-white/[0.12] shadow-xl dark:shadow-[0_8px_30px_rgba(0,0,0,0.6)] py-1.5 animate-in fade-in zoom-in-95 duration-150 overflow-hidden flex flex-col`}
+        >
+          <div className="px-3 py-1 text-[10px] font-extrabold uppercase tracking-wider text-slate-400 dark:text-slate-500 border-b border-slate-100 dark:border-white/[0.06] shrink-0">
+            Project Role
+          </div>
+          <div className="py-0.5">
+            {ROLE_OPTIONS.map((role) => {
+              const isSelected = role === normalizedRole;
+              return (
+                <button
+                  key={role}
+                  type="button"
+                  onClick={() => {
+                    if (role !== normalizedRole) {
+                      onSelect(email, role);
+                    }
+                    setIsOpen(false);
+                  }}
+                  className={`w-full flex items-center justify-between px-3 py-1.5 text-xs font-medium transition-colors cursor-pointer text-left ${
+                    isSelected
+                      ? 'bg-[#5cb028]/10 text-[#3d8318] dark:bg-[#88c958]/15 dark:text-[#88c958] font-bold'
+                      : 'text-slate-700 dark:text-slate-300 hover:bg-slate-50 dark:hover:bg-white/[0.05]'
+                  }`}
+                >
+                  <span>{role}</span>
+                  {isSelected && (
+                    <Check className="w-3.5 h-3.5 text-[#5cb028] dark:text-[#88c958] shrink-0" />
+                  )}
+                </button>
+              );
+            })}
+          </div>
+        </div>
+      )}
+    </div>
+  );
+};
+
+export const MembersTab: React.FC<MembersTabProps> = ({
+  members,
+  pendingRequests = [],
+  pagination,
+  currentPage = 1,
+  currentLimit = 10,
+  searchQuery = '',
+  isLoading,
+  onRefresh,
+  onPageChange,
+  onLimitChange,
+  onSearchChange,
+  onWhitelistAdded,
+  onRemoveMember,
+  onUpdateMemberRole,
+  onApproveMember,
+  onRejectMember,
+  currentEmail,
+  isAdmin = true,
+}) => {
+  const [memberToRemove, setMemberToRemove] = useState<TeamMember | null>(null);
+  const [isRemoving, setIsRemoving] = useState(false);
+  const [localSearch, setLocalSearch] = useState(searchQuery);
+  const debouncedSearch = useDebounce(localSearch, 400);
+
+  const [updatingRoleEmail, setUpdatingRoleEmail] = useState<string | null>(null);
+  const [approvingEmail, setApprovingEmail] = useState<string | null>(null);
+  const [rejectingEmail, setRejectingEmail] = useState<string | null>(null);
+  const [memberToReject, setMemberToReject] = useState<TeamMember | null>(null);
+  const [selectedMember, setSelectedMember] = useState<TeamMember | null>(null);
+
+  const handleRoleSelect = async (memberEmail: string, newRole: string) => {
+    if (!onUpdateMemberRole) return;
+
+    setUpdatingRoleEmail(memberEmail);
+    try {
+      await onUpdateMemberRole(memberEmail, newRole);
+    } finally {
+      setUpdatingRoleEmail(null);
+    }
+  };
+
+  useEffect(() => {
+    setLocalSearch(searchQuery);
+  }, [searchQuery]);
+
+  useEffect(() => {
+    if (!onSearchChange) return;
+    const trimmed = debouncedSearch.trim();
+
+    if (trimmed.length >= 3) {
+      if (trimmed !== searchQuery) {
+        onSearchChange(trimmed);
+      }
+    } else {
+      if (searchQuery !== '') {
+        onSearchChange('');
+      }
+    }
+  }, [debouncedSearch, searchQuery, onSearchChange]);
+
+  const handleKeyDown = (e: React.KeyboardEvent<HTMLInputElement>) => {
+    if (e.key === 'Enter') {
+      e.preventDefault();
+      const clean = localSearch.trim();
+      if (clean.length >= 3) {
+        if (clean !== searchQuery && onSearchChange) {
+          onSearchChange(clean);
+        }
+      } else if (clean.length === 0) {
+        if (searchQuery !== '' && onSearchChange) {
+          onSearchChange('');
+        }
+      }
+    }
+  };
+
+  const handleClearSearch = () => {
+    setLocalSearch('');
+    if (onSearchChange && searchQuery !== '') {
+      onSearchChange('');
+    }
+  };
+
+  const trimmedLocal = localSearch.trim();
+  const isSearchDebouncing = trimmedLocal.length >= 3 && trimmedLocal !== searchQuery;
+  const showTableSkeleton = isLoading || isSearchDebouncing;
+
+  const totalItems = pagination?.totalItems ?? members.length;
+  const totalPages = pagination?.totalPages ?? Math.max(1, Math.ceil(totalItems / currentLimit));
+  const activePage = pagination?.page ?? currentPage;
+  const hasPrev = pagination?.hasPrevPage ?? activePage > 1;
+  const hasNext = pagination?.hasNextPage ?? activePage < totalPages;
+
+  const startRange = totalItems === 0 ? 0 : (activePage - 1) * currentLimit + 1;
+  const endRange = Math.min(activePage * currentLimit, totalItems);
+
+  const pageNumbers = Array.from({ length: totalPages }, (_, i) => i + 1);
+
+  if (isLoading && !searchQuery && !localSearch.trim() && currentPage === 1) {
+    return <MembersSkeleton isAdmin={isAdmin} />;
+  }
+
+  return (
+    <div className="space-y-6 animate-in fade-in duration-200">
+      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 border-b border-slate-200 dark:border-white/[0.08] pb-4">
+        <div>
+          <h2 className="text-xl font-extrabold text-slate-900 dark:text-white flex items-center gap-2">
+            <Users className="w-5 h-5 text-[#5cb028] dark:text-[#88c958]" />
+            {isAdmin ? 'Team Members' : 'Team Directory'}
+          </h2>
+          <p className="text-xs text-slate-500 dark:text-slate-400 mt-1">
+            {isAdmin
+              ? 'Developer permissions, role management, and workspace collaborators'
+              : 'Workspace teammates, collaborators, and active retrospective contributors'}
+          </p>
+        </div>
+      </div>
+
+      <div className="rounded-2xl bg-white dark:bg-[#0e1015] border border-slate-200 dark:border-white/[0.08] shadow-xs overflow-hidden">
+        <div className="p-5 sm:p-6 border-b border-slate-100 dark:border-white/[0.08] flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+          <div className="flex items-center gap-2.5">
+            <UserCheck className="w-4 h-4 text-[#5cb028] dark:text-[#88c958]" />
+            <h3 className="text-sm font-bold text-slate-900 dark:text-white">Team Directory & Collaborators</h3>
+          </div>
+
+          <div className="flex items-center justify-between sm:justify-end gap-3.5 w-full sm:w-auto">
+            <span className="text-xs text-slate-500 dark:text-slate-400 font-medium whitespace-nowrap">
+              {totalItems} Total Contributor{totalItems !== 1 ? 's' : ''}
+            </span>
+
+            <div className="relative w-full sm:w-64">
+            <div className="absolute left-3 top-1/2 -translate-y-1/2 flex items-center justify-center pointer-events-none">
+              {showTableSkeleton ? (
+                <Loader2 className="w-3.5 h-3.5 text-[#88c958] animate-spin" />
+              ) : (
+                <Search className="w-3.5 h-3.5 text-slate-400" />
+              )}
+            </div>
+            <input
+              type="text"
+              value={localSearch}
+              onChange={(e) => setLocalSearch(e.target.value)}
+              onKeyDown={handleKeyDown}
+              placeholder="Search members..."
+              className="w-full pl-8 pr-8 py-1.5 bg-slate-50 dark:bg-[#12151c] border border-slate-200 dark:border-white/[0.08] rounded-xl text-xs text-slate-900 dark:text-white placeholder:text-slate-400 dark:placeholder:text-slate-500 focus:outline-none focus:ring-2 focus:ring-[#88c958]/20 focus:border-[#88c958] transition-all"
+            />
+            {localSearch && (
+              <button
+                type="button"
+                onClick={handleClearSearch}
+                className="absolute right-2.5 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-600 dark:hover:text-slate-200 cursor-pointer"
+                title="Clear search"
+              >
+                <X className="w-3.5 h-3.5" />
+              </button>
+            )}
+            </div>
+          </div>
+        </div>
+
+        <div className="overflow-x-auto min-h-[300px] pb-12 sm:pb-6">
+          <table className="w-full text-left text-xs text-slate-600 dark:text-slate-300">
+            <thead className="bg-slate-50/80 dark:bg-[#12151c]/70 text-[11px] font-bold text-slate-500 dark:text-slate-400 uppercase tracking-wider border-b border-slate-200/60 dark:border-white/[0.08]">
+              <tr>
+                <th className="px-6 py-3.5">Member Name</th>
+                <th className="px-6 py-3.5">Assigned Projects</th>
+                <th className="px-6 py-3.5">Project Role</th>
+                <th className="px-6 py-3.5">Status</th>
+                <th className="px-6 py-3.5 text-right">Activity</th>
+                {isAdmin && (
+                  <th className="px-6 py-3.5 text-right">Actions</th>
+                )}
+              </tr>
+            </thead>
+            <tbody className="divide-y divide-slate-100 dark:divide-white/[0.05]">
+              {showTableSkeleton ? (
+                Array.from({ length: 4 }).map((_, idx) => (
+                  <tr key={idx} className="animate-pulse">
+                    <td className="px-6 py-4 flex items-center gap-3">
+                      <div className="w-9 h-9 rounded-xl bg-slate-200/80 dark:bg-white/[0.06] shrink-0" />
+                      <div className="space-y-1.5">
+                        <div className="h-3.5 w-28 bg-slate-200/80 dark:bg-white/[0.06] rounded-md" />
+                        <div className="h-2.5 w-16 bg-slate-100 dark:bg-white/[0.03] rounded-md" />
+                      </div>
+                    </td>
+                    <td className="px-6 py-4">
+                      <div className="h-6 w-24 bg-slate-100 dark:bg-white/[0.06] rounded-lg" />
+                    </td>
+                    <td className="px-6 py-4">
+                      <div className="h-6 w-20 bg-slate-100 dark:bg-white/[0.06] rounded-lg" />
+                    </td>
+                    <td className="px-6 py-4">
+                      <div className="h-5 w-14 bg-slate-100 dark:bg-white/[0.06] rounded-full" />
+                    </td>
+                    <td className="px-6 py-4 text-right">
+                      <div className="h-4 w-12 bg-slate-100 dark:bg-white/[0.06] rounded ml-auto" />
+                    </td>
+                    {isAdmin && (
+                      <td className="px-6 py-4 text-right">
+                        <div className="h-7 w-16 bg-slate-100 dark:bg-white/[0.06] rounded-xl ml-auto" />
+                      </td>
+                    )}
+                  </tr>
+                ))
+              ) : members.length === 0 ? (
+                <tr>
+                  <td
+                    colSpan={isAdmin ? 6 : 5}
+                    className="py-12 text-center text-slate-400 dark:text-slate-500 text-xs"
+                  >
+                    {localSearch
+                      ? `No contributors found matching "${localSearch}". Try clearing search.`
+                      : 'No team members found. Whitelist developers using the input above.'}
+                  </td>
+                </tr>
+              ) : (
+                members.map((m, index) => {
+                  const emailLower = m.email?.toLowerCase().trim();
+                  const isSelf = emailLower === currentEmail?.toLowerCase().trim();
+                  const isPrimaryOwner = Boolean(m.isPrimaryLead || (m as any).isPrimaryOwner);
+
+                  return (
+                    <tr
+                      key={m.id || m.email}
+                      className="hover:bg-slate-50/50 dark:hover:bg-white/[0.02] transition-colors"
+                    >
+                      <td className="px-6 py-4">
+                        <div
+                          onClick={() => setSelectedMember(m)}
+                          className="flex items-center gap-3 cursor-pointer group/member w-fit"
+                          title="Click to view full details"
+                        >
+                          <div className="group-hover/member:scale-105 transition-transform">
+                            <UserAvatar
+                              name={m.name || m.email}
+                              email={m.email}
+                              title={m.email}
+                              avatar={m.avatar}
+                              size="md"
+                              status="online"
+                            />
+                          </div>
+                          <div>
+                            <div className="flex items-center gap-1.5">
+                              <p className="font-bold text-slate-900 dark:text-white group-hover/member:text-[#88c958] transition-colors">
+                                {m.name || m.email}
+                              </p>
+                              {isSelf && (
+                                <span className="text-[10px] font-semibold text-[#3d8318] dark:text-[#88c958] bg-[#eaf5e3] dark:bg-[#88c958]/15 px-1.5 py-0.5 rounded">
+                                  You
+                                </span>
+                              )}
+                            </div>
+                            {isPrimaryOwner || (isSelf && isAdmin) ? (
+                              <span className="text-[10px] text-slate-400 dark:text-slate-500">
+                                Admin
+                              </span>
+                            ) : (
+                              <span className="text-[10px] font-medium text-[#3d8318] dark:text-[#88c958] bg-[#eaf5e3] dark:bg-[#88c958]/15 px-1.5 py-0.5 rounded">
+                                {m.projectRole && m.projectRole !== 'Unassigned' ? m.projectRole : 'Developer'}
+                              </span>
+                            )}
+                          </div>
+                        </div>
+                      </td>
+
+                      <td className="px-6 py-4">
+                        {typeof m.projectsCount === 'number' && m.projectsCount > 0 ? (
+                          <div className="relative group inline-block hover:z-50">
+                            <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg text-xs font-bold bg-[#eaf5e3] dark:bg-[#88c958]/15 text-[#3d8318] dark:text-[#88c958] border border-[#cdeac0] dark:border-[#88c958]/30 shadow-2xs group-hover:bg-[#def0d4] dark:group-hover:bg-[#88c958]/25 group-hover:border-[#b8e2a6] group-hover:shadow-xs transition-all cursor-pointer select-none">
+                              <FolderKanban className="w-3.5 h-3.5 text-[#5cb028] dark:text-[#88c958] shrink-0" />
+                              <span>{m.projectsCount} {m.projectsCount === 1 ? 'Project' : 'Projects'}</span>
+                            </span>
+
+                            <div
+                              className={`absolute left-0 ${
+                                index >= 2 ? 'bottom-full mb-2.5' : 'top-full mt-2.5'
+                              } z-50 w-64 bg-white/95 dark:bg-[#0e1015]/95 backdrop-blur-xl border border-slate-200/90 dark:border-white/[0.08] rounded-2xl shadow-xl shadow-black/40 p-3.5 pointer-events-none opacity-0 invisible group-hover:opacity-100 group-hover:visible transition-all duration-200 ease-out`}
+                            >
+                              <div className="flex items-center justify-between gap-2 pb-2.5 border-b border-slate-100 dark:border-white/[0.08]">
+                                <div className="flex items-center gap-1.5">
+                                  <div className="w-5 h-5 rounded-md bg-[#eaf5e3] dark:bg-[#88c958]/15 border border-[#cdeac0] dark:border-[#88c958]/30 flex items-center justify-center text-[#3d8318] dark:text-[#88c958] shrink-0">
+                                    <FolderKanban className="w-3 h-3" />
+                                  </div>
+                                  <span className="text-[11px] font-bold text-slate-900 dark:text-white tracking-tight">
+                                    Assigned Projects
+                                  </span>
+                                </div>
+                                <span className="px-1.5 py-0.5 rounded-md text-[10px] font-mono font-bold bg-[#eaf5e3] dark:bg-[#88c958]/15 text-[#3d8318] dark:text-[#88c958] border border-[#cdeac0] dark:border-[#88c958]/30">
+                                  {m.projectsCount}
+                                </span>
+                              </div>
+
+                              <div className="pt-2 space-y-1.5 max-h-48 overflow-y-auto pr-0.5">
+                                {m.projectNames && m.projectNames.length > 0 ? (
+                                  m.projectNames.map((pName, pIdx) => (
+                                    <div
+                                      key={pIdx}
+                                      className="flex items-center gap-2 px-2.5 py-1.5 rounded-xl bg-slate-50/90 dark:bg-[#12151c] hover:bg-[#eaf5e3]/50 dark:hover:bg-[#88c958]/15 border border-slate-200/70 dark:border-white/[0.06] transition-colors"
+                                    >
+                                      <span className="w-1.5 h-1.5 rounded-full bg-[#88c958] shrink-0" />
+                                      <span className="text-xs font-semibold text-slate-800 dark:text-slate-200 truncate">
+                                        {pName}
+                                      </span>
+                                    </div>
+                                  ))
+                                ) : (
+                                  <p className="text-[11px] text-slate-400 dark:text-slate-500 italic py-1">
+                                    No assigned projects
+                                  </p>
+                                )}
+                              </div>
+
+                              {index >= 2 ? (
+                                <div className="absolute -bottom-1.5 left-6 w-3 h-3 bg-white dark:bg-[#0e1015] border-r border-b border-slate-200/90 dark:border-white/[0.08] rotate-45" />
+                              ) : (
+                                <div className="absolute -top-1.5 left-6 w-3 h-3 bg-white dark:bg-[#0e1015] border-l border-t border-slate-200/90 dark:border-white/[0.08] rotate-45" />
+                              )}
+                            </div>
+                          </div>
+                        ) : (
+                          <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-md text-[11px] font-medium bg-slate-100 dark:bg-[#12151c] text-slate-400 dark:text-slate-500 border border-slate-200 dark:border-white/[0.08]">
+                            0 Projects
+                          </span>
+                        )}
+                      </td>
+
+                      <td className="px-6 py-4">
+                        {isPrimaryOwner || (isSelf && isAdmin) ? (
+                          <div className="inline-flex items-center" title="Admin role is permanent">
+                            <StatusPill status="admin" label="ADMIN" />
+                          </div>
+                        ) : isAdmin ? (
+                          <MemberRoleDropdown
+                            email={m.email}
+                            currentRole={m.projectRole}
+                            onSelect={handleRoleSelect}
+                            isUpdating={updatingRoleEmail === m.email}
+                            rowIndex={index}
+                            totalRows={members.length}
+                          />
+                        ) : (
+                          <StatusPill status={m.projectRole && m.projectRole !== 'Unassigned' ? m.projectRole : 'Developer'} />
+                        )}
+                      </td>
+
+                      <td className="px-6 py-4">
+                        {m.status === 'pending' ? (
+                          <span className="inline-flex items-center gap-1.5 text-amber-700 dark:text-amber-400 font-semibold text-[11px] bg-amber-50 dark:bg-amber-950/40 px-2 py-0.5 rounded-full border border-amber-200 dark:border-amber-500/30">
+                            <span className="w-1.5 h-1.5 rounded-full bg-amber-500 animate-pulse" />
+                            Pending Approval
+                          </span>
+                        ) : m.status === 'unverified' ? (
+                          <span className="inline-flex items-center gap-1.5 text-slate-500 dark:text-slate-400 font-semibold text-[11px] bg-slate-100 dark:bg-[#12151c] px-2 py-0.5 rounded-full border border-slate-200 dark:border-white/[0.08]">
+                            <span className="w-1.5 h-1.5 rounded-full bg-slate-400" />
+                            Unverified
+                          </span>
+                        ) : (
+                          <span className="inline-flex items-center gap-1.5 text-emerald-700 dark:text-[#88c958] font-semibold text-[11px]">
+                            <span className="w-1.5 h-1.5 rounded-full bg-[#88c958]" />
+                            Active
+                          </span>
+                        )}
+                      </td>
+
+                      <td className="px-6 py-4 text-right">
+                        <span className="text-slate-400 dark:text-slate-500 text-[11px] font-mono">Synced</span>
+                      </td>
+
+                      {isAdmin && (
+                        <td className="px-6 py-4 text-right">
+                          {isPrimaryOwner || isSelf ? (
+                            <span
+                              className="inline-flex items-center gap-1 px-2.5 py-1 rounded-md text-[10px] font-bold bg-slate-100 dark:bg-[#12151c] text-slate-600 dark:text-slate-300 border border-slate-200 dark:border-white/[0.08] select-none"
+                              title="Admin account cannot be removed"
+                            >
+                              Admin
+                            </span>
+                          ) : m.status === 'pending' ? (
+                            <div className="inline-flex items-center gap-2 justify-end">
+                              <button
+                                type="button"
+                                onClick={async () => {
+                                  if (!onApproveMember) return;
+                                  setApprovingEmail(m.email);
+                                  try {
+                                    await onApproveMember(m.email, m.projectRole || 'Developer');
+                                  } finally {
+                                    setApprovingEmail(null);
+                                  }
+                                }}
+                                disabled={approvingEmail === m.email || rejectingEmail === m.email}
+                                className="inline-flex items-center justify-center min-w-[64px] px-3 py-1.5 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-bold transition-all shadow-2xs cursor-pointer disabled:opacity-50 dark:bg-[#88c958] dark:hover:bg-[#96dc63] dark:text-[#08090a] dark:font-black"
+                                title={`Approve ${m.name || m.email} to join workspace`}
+                              >
+                                {approvingEmail === m.email ? (
+                                  <Loader2 className="w-3.5 h-3.5 animate-spin text-white dark:text-[#08090a]" />
+                                ) : (
+                                  <span>Accept</span>
+                                )}
+                              </button>
+
+                              <button
+                                type="button"
+                                onClick={() => setMemberToReject(m)}
+                                disabled={approvingEmail === m.email || rejectingEmail === m.email}
+                                className="inline-flex items-center justify-center min-w-[64px] px-3 py-1.5 rounded-xl border border-rose-200 dark:border-rose-500/30 hover:border-rose-300 dark:hover:border-rose-500/60 hover:bg-rose-50 dark:hover:bg-rose-950/30 text-rose-600 dark:text-rose-400 text-xs font-bold transition-all shadow-2xs cursor-pointer disabled:opacity-50"
+                                title={`Reject access request for ${m.name || m.email}`}
+                              >
+                                {rejectingEmail === m.email ? (
+                                  <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                                ) : (
+                                  <span>Reject</span>
+                                )}
+                              </button>
+                            </div>
+                          ) : (
+                            <button
+                              type="button"
+                              onClick={() => setMemberToRemove(m)}
+                              className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl border border-slate-200 dark:border-white/[0.08] hover:border-rose-300 dark:hover:border-rose-500/50 hover:bg-rose-50 dark:hover:bg-rose-950/30 text-slate-600 dark:text-slate-300 hover:text-rose-600 dark:hover:text-rose-400 text-xs font-semibold transition-all cursor-pointer shadow-2xs group"
+                              title={`Remove ${m.name || m.email} from workspace`}
+                            >
+                              <Trash2 className="w-3.5 h-3.5 text-slate-400 group-hover:text-rose-600 transition-colors" />
+                              <span>Remove</span>
+                            </button>
+                          )}
+                        </td>
+                      )}
+                    </tr>
+                  );
+                })
+              )}
+            </tbody>
+          </table>
+        </div>
+
+        {totalItems > 0 && (
+          <div className="p-4 sm:px-6 bg-slate-50/80 dark:bg-[#12151c]/70 border-t border-slate-100 dark:border-white/[0.08] flex flex-col sm:flex-row items-center justify-between gap-3 text-xs">
+            <div className="flex items-center gap-3 text-slate-500 dark:text-slate-400">
+              <span>
+                Showing <strong className="text-slate-800 dark:text-slate-200">{startRange}</strong> to{' '}
+                <strong className="text-slate-800 dark:text-slate-200">{endRange}</strong> of{' '}
+                <strong className="text-slate-800 dark:text-slate-200">{totalItems}</strong> contributors
+              </span>
+
+              {onLimitChange && (
+                <div className="flex items-center gap-1.5 pl-3 border-l border-slate-200 dark:border-white/[0.08]">
+                  <span className="text-[11px] text-slate-400 dark:text-slate-500">Rows:</span>
+                  <select
+                    value={currentLimit}
+                    onChange={(e) => onLimitChange(Number(e.target.value))}
+                    className="px-2 py-1 bg-white dark:bg-[#0e1015] border border-slate-200 dark:border-white/[0.08] rounded-lg text-[11px] font-bold text-slate-700 dark:text-slate-200 focus:outline-none focus:ring-1 focus:ring-[#88c958] cursor-pointer"
+                  >
+                    <option value={10}>10 per page</option>
+                    <option value={20}>20 per page</option>
+                    <option value={50}>50 per page</option>
+                  </select>
+                </div>
+              )}
+            </div>
+
+            {totalPages > 1 && onPageChange && (
+              <div className="flex items-center gap-1">
+                <button
+                  type="button"
+                  onClick={() => onPageChange(activePage - 1)}
+                  disabled={!hasPrev || isLoading}
+                  className="inline-flex items-center gap-1 px-2.5 py-1.5 rounded-lg border border-slate-200 dark:border-white/[0.08] bg-white dark:bg-[#12151c] text-slate-600 dark:text-slate-300 font-semibold text-xs hover:bg-slate-50 dark:hover:bg-white/[0.05] hover:text-slate-900 dark:hover:text-white disabled:opacity-40 disabled:cursor-not-allowed transition-all cursor-pointer shadow-2xs"
+                >
+                  <ChevronLeft className="w-3.5 h-3.5" />
+                  <span className="hidden sm:inline">Prev</span>
+                </button>
+
+                {pageNumbers.map((p) => (
+                  <button
+                    key={p}
+                    type="button"
+                    onClick={() => onPageChange(p)}
+                    disabled={isLoading}
+                    className={`min-w-[32px] h-8 rounded-lg text-xs font-bold transition-all cursor-pointer ${
+                      p === activePage
+                        ? 'bg-[#5cb028] text-white shadow-xs dark:bg-[#88c958] dark:text-[#08090a] dark:font-black dark:shadow-xs'
+                        : 'bg-white dark:bg-[#12151c] text-slate-600 dark:text-slate-300 border border-slate-200 dark:border-white/[0.08] hover:bg-slate-50 dark:hover:bg-white/[0.05] hover:text-slate-900 dark:hover:text-white'
+                    }`}
+                  >
+                    {p}
+                  </button>
+                ))}
+
+                <button
+                  type="button"
+                  onClick={() => onPageChange(activePage + 1)}
+                  disabled={!hasNext || isLoading}
+                  className="inline-flex items-center gap-1 px-2.5 py-1.5 rounded-lg border border-slate-200 dark:border-white/[0.08] bg-white dark:bg-[#12151c] text-slate-600 dark:text-slate-300 font-semibold text-xs hover:bg-slate-50 dark:hover:bg-white/[0.05] hover:text-slate-900 dark:hover:text-white disabled:opacity-40 disabled:cursor-not-allowed transition-all cursor-pointer shadow-2xs"
+                >
+                  <span className="hidden sm:inline">Next</span>
+                  <ChevronRight className="w-3.5 h-3.5" />
+                </button>
+              </div>
+            )}
+          </div>
+        )}
+      </div>
+
+      {memberToRemove && (
+        <Modal
+          isOpen={!!memberToRemove}
+          onClose={() => {
+            if (!isRemoving) setMemberToRemove(null);
+          }}
+          title="Remove Member?"
+          description="Are you sure you want to revoke workspace access for this contributor?"
+          icon={<Trash2 className="w-5 h-5 text-white" />}
+          variant="danger"
+          maxWidth="md"
+          footer={
+            <>
+              <button
+                type="button"
+                disabled={isRemoving}
+                onClick={() => setMemberToRemove(null)}
+                className="px-4 py-2 rounded-xl border border-slate-200 dark:border-white/[0.08] bg-white dark:bg-[#12151c] hover:bg-slate-50 dark:hover:bg-white/[0.05] text-slate-700 dark:text-slate-300 text-xs font-semibold shadow-2xs transition-colors cursor-pointer"
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                onClick={async () => {
+                  if (!memberToRemove || !onRemoveMember) return;
+                  const targetEmail = memberToRemove.email;
+                  setMemberToRemove(null);
+                  try {
+                    await onRemoveMember(targetEmail);
+                  } catch (err) {
+                    console.error('Failed to remove member:', err);
+                  }
+                }}
+                className="inline-flex items-center gap-2 px-4 py-2 rounded-xl bg-rose-600 hover:bg-rose-700 text-white text-xs font-bold shadow-sm transition-all cursor-pointer"
+              >
+                <Trash2 className="w-3.5 h-3.5" />
+                <span>Remove Member</span>
+              </button>
+            </>
+          }
+        >
+          <div className="py-1">
+            <div className="p-3.5 rounded-xl bg-slate-50 dark:bg-[#12151c] border border-slate-200 dark:border-white/[0.08] flex items-center justify-between">
+              <div className="flex items-center gap-3 min-w-0">
+                <UserAvatar
+                  name={memberToRemove.name || memberToRemove.email}
+                  email={memberToRemove.email}
+                  title={memberToRemove.email}
+                  avatar={memberToRemove.avatar}
+                  size="md"
+                />
+                <div className="min-w-0">
+                  <p className="font-bold text-sm text-slate-900 dark:text-white truncate">
+                    {memberToRemove.name || memberToRemove.email}
+                  </p>
+                  <p className="text-xs text-slate-500 dark:text-slate-400 truncate">
+                    {memberToRemove.email}
+                  </p>
+                </div>
+              </div>
+              <div className="flex items-center gap-2 shrink-0">
+                {typeof memberToRemove.projectsCount === 'number' && memberToRemove.projectsCount > 0 && (
+                  <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md text-[10px] font-bold bg-[#eaf5e3] dark:bg-[#88c958]/15 text-[#3d8318] dark:text-[#88c958] border border-[#cdeac0] dark:border-[#88c958]/30">
+                    <FolderKanban className="w-3 h-3 text-[#5cb028] dark:text-[#88c958]" />
+                    <span>{memberToRemove.projectsCount} {memberToRemove.projectsCount === 1 ? 'Project' : 'Projects'}</span>
+                  </span>
+                )}
+                <StatusPill status={memberToRemove.projectRole && memberToRemove.projectRole !== 'Unassigned' ? memberToRemove.projectRole : memberToRemove.role || 'Developer'} />
+              </div>
+            </div>
+          </div>
+        </Modal>
+      )}
+
+      {memberToReject && (
+        <Modal
+          isOpen={!!memberToReject}
+          onClose={() => !rejectingEmail && setMemberToReject(null)}
+          title="Reject Access Request?"
+          description="Are you sure you want to decline this registration request?"
+          variant="danger"
+          maxWidth="md"
+          footer={
+            <>
+              <button
+                type="button"
+                onClick={() => setMemberToReject(null)}
+                disabled={!!rejectingEmail}
+                className="px-4 py-2 rounded-xl border border-slate-200 dark:border-white/[0.08] bg-white dark:bg-[#12151c] text-xs font-bold text-slate-700 dark:text-slate-300 hover:bg-slate-50 dark:hover:bg-white/[0.05] transition-colors cursor-pointer disabled:opacity-50"
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                onClick={async () => {
+                  if (!memberToReject || !onRejectMember) return;
+                  const targetEmail = memberToReject.email;
+                  setMemberToReject(null);
+                  try {
+                    await onRejectMember(targetEmail);
+                  } catch (err) {
+                    console.error('Failed to reject member:', err);
+                  }
+                }}
+                className="inline-flex items-center gap-1.5 px-4 py-2 rounded-xl bg-rose-600 hover:bg-rose-700 text-white text-xs font-bold shadow-xs transition-colors cursor-pointer"
+              >
+                <X className="w-3.5 h-3.5 stroke-[2.5]" />
+                <span>Reject Request</span>
+              </button>
+            </>
+          }
+        >
+          <div className="py-1">
+            <div className="p-3.5 rounded-xl bg-slate-50 dark:bg-[#12151c] border border-slate-200 dark:border-white/[0.08] flex items-center justify-between">
+              <div className="flex items-center gap-3 min-w-0">
+                <UserAvatar
+                  name={memberToReject.name || memberToReject.email}
+                  email={memberToReject.email}
+                  title={memberToReject.email}
+                  avatar={memberToReject.avatar}
+                  size="md"
+                />
+                <div className="min-w-0">
+                  <p className="font-bold text-sm text-slate-900 dark:text-white truncate">
+                    {memberToReject.name || memberToReject.email}
+                  </p>
+                  <p className="text-xs text-slate-500 dark:text-slate-400 truncate">
+                    {memberToReject.email}
+                  </p>
+                </div>
+              </div>
+              <span className="px-2 py-0.5 rounded-md text-[10px] font-bold bg-amber-50 dark:bg-amber-950/40 text-amber-700 dark:text-amber-300 border border-amber-200 dark:border-amber-500/30 shrink-0">
+                Pending Approval
+              </span>
+            </div>
+          </div>
+        </Modal>
+      )}
+
+      <MemberDetailModal
+        isOpen={!!selectedMember}
+        member={
+          selectedMember
+            ? members.find((m) => m.email?.toLowerCase().trim() === selectedMember.email?.toLowerCase().trim()) || selectedMember
+            : null
+        }
+        onClose={() => setSelectedMember(null)}
+        isAdmin={isAdmin}
+        currentEmail={currentEmail}
+      />
+    </div>
+  );
+};
+
+export default MembersTab;

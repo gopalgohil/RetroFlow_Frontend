@@ -1,0 +1,187 @@
+'use client';
+
+import React, { useState, use } from 'react';
+import { ShieldAlert, Lock } from 'lucide-react';
+import { useRetroSession } from '@/hooks/useRetroSession';
+import {
+  RetroHeader,
+  RetroColumn,
+  ParticipantNameModal,
+  RetroNotFound,
+  EndSessionExportModal,
+} from '@/components/retro';
+import { ShareInviteModal } from '@/components/dashboard/ShareInviteModal';
+import { RetroBoardSkeleton } from '@/components/dashboard';
+
+export default function LiveRetroBoardPage({
+  params,
+}: {
+  params: Promise<{ shareToken: string }>;
+}) {
+  const { shareToken } = use(params);
+  const [isInviteModalOpen, setIsInviteModalOpen] = useState(false);
+  const [isEndSessionModalOpen, setIsEndSessionModalOpen] = useState(false);
+  const [exportModalMode, setExportModalMode] = useState<'export_only' | 'end_and_export'>('end_and_export');
+  const [activeDragTopicId, setActiveDragTopicId] = useState<string | null>(null);
+  const [toastFeedback, setToastFeedback] = useState<string | null>(null);
+
+  const handleCrossColumnRejected = () => {
+    setToastFeedback(
+      'Only Admin and Manager can move cards between questions. Team members can reorder within the same question.'
+    );
+    setTimeout(() => {
+      setToastFeedback(null);
+    }, 4000);
+  };
+
+  const session = useRetroSession(shareToken);
+
+  if (session.isLoading) {
+    return <RetroBoardSkeleton />;
+  }
+
+  if (session.error || !session.retro) {
+    return <RetroNotFound error={session.error} isFacilitator={session.isFacilitator} />;
+  }
+
+  const isClosed = session.retro?.status === 'completed';
+
+  return (
+    <div className="min-h-screen bg-[#F8FAFC] dark:bg-[#08090a] text-slate-900 dark:text-white flex flex-col font-sans selection:bg-[#88c958] selection:text-[#08090a]">
+      <RetroHeader
+        title={session.retro.title}
+        description={session.retro.description}
+        isFacilitator={session.isFacilitator}
+        isGuest={session.isGuest}
+        currentAuthorName={session.currentAuthorName}
+        remainingVotes={session.remainingVotes}
+        isRevealed={session.isRevealed}
+        revealMode={session.retro.revealMode}
+        socketConnected={session.socketConnected}
+        verifiedGuestEmail={session.verifiedGuestEmail}
+        projectId={session.retro.projectId}
+        projectKey={session.retro.projectKey}
+        sprintName={session.retro.sprintName}
+        userRole={session.effectiveUserRole}
+        isClosed={isClosed}
+        onToggleReveal={() => session.setIsRevealed((prev) => !prev)}
+        onOpenInvite={() => setIsInviteModalOpen(true)}
+        onEndSession={
+          session.canExportToSprint && !isClosed
+            ? () => {
+                setExportModalMode('end_and_export');
+                setIsEndSessionModalOpen(true);
+              }
+            : undefined
+        }
+        onReopenSession={session.isFacilitator ? session.reopenSession : undefined}
+      />
+
+      {isClosed && (
+        <div className="bg-slate-100 dark:bg-white/[0.04] border-b border-slate-200 dark:border-white/[0.08] px-4 py-2 sm:px-6 flex items-center justify-between text-xs text-slate-700 dark:text-slate-300 animate-in fade-in">
+          <div className="flex items-center gap-2">
+            <Lock className="w-4 h-4 text-slate-500 dark:text-slate-400 shrink-0" />
+            <span className="font-bold">Retrospective Session Completed (Read-Only)</span>
+            <span className="hidden sm:inline text-slate-500 dark:text-slate-400">
+              — This retrospective session has been ended and marked completed by the manager. New feedback is locked.
+            </span>
+          </div>
+          <span className="px-2.5 py-0.5 rounded-full text-[10px] font-extrabold uppercase tracking-wider bg-slate-200/80 dark:bg-white/[0.08] text-slate-700 dark:text-slate-200 border border-slate-300 dark:border-white/[0.1]">
+            COMPLETED
+          </span>
+        </div>
+      )}
+
+      <main className="flex-1 p-3 sm:p-4 md:p-5 overflow-x-auto w-full">
+        {(() => {
+          const actionTopic = session.retro.topics?.find(
+            (t) =>
+              (t.title || '').toLowerCase().includes('action') ||
+              t.icon === 'target' ||
+              (t.topicId && t.topicId.toLowerCase().includes('action'))
+          );
+
+          return (
+            <div className="flex gap-3 sm:gap-4 items-start w-full min-w-max md:min-w-0 pb-6">
+              {session.retro.topics?.map((topic) => (
+                <RetroColumn
+                  key={topic.topicId}
+                  topic={topic}
+                  cards={session.cards.filter((c) => c.topicId === topic.topicId)}
+                  isRevealed={session.isRevealed}
+                  remainingVotes={session.remainingVotes}
+                  currentAuthorName={session.currentAuthorName}
+                  canManageActionItems={session.canExportToSprint}
+                  canMoveCrossColumn={session.canMoveCrossColumn}
+                  activeDragTopicId={activeDragTopicId}
+                  isClosed={isClosed}
+                  onDragCardStart={(_cardId, topicId) => setActiveDragTopicId(topicId)}
+                  onDragCardEnd={() => setActiveDragTopicId(null)}
+                  onCrossColumnRejected={handleCrossColumnRejected}
+                  actionTopicId={actionTopic?.topicId}
+                  canEditCard={session.canEditCard}
+                  canDeleteCard={session.canDeleteCard}
+                  onAddCard={session.addCard}
+                  onUpdateCard={session.updateCard}
+                  onDeleteCard={session.deleteCard}
+                  onVoteCard={session.voteCard}
+                  onMoveCard={session.moveCard}
+                  onReorderCards={session.reorderCards}
+                  onExportTopic={
+                    session.canExportToSprint
+                      ? () => {
+                          setExportModalMode('export_only');
+                          setIsEndSessionModalOpen(true);
+                        }
+                      : undefined
+                  }
+                />
+              ))}
+            </div>
+          );
+        })()}
+      </main>
+
+      <ParticipantNameModal
+        isOpen={session.isNamePromptOpen}
+        onJoin={(name, email) => session.setGuestName(name, email)}
+        verifiedEmail={session.verifiedGuestEmail}
+      />
+
+      {session.isFacilitator && (
+        <ShareInviteModal
+          isOpen={isInviteModalOpen}
+          onClose={() => setIsInviteModalOpen(false)}
+          session={session.retro}
+        />
+      )}
+
+      <EndSessionExportModal
+        isOpen={isEndSessionModalOpen}
+        onClose={() => setIsEndSessionModalOpen(false)}
+        retroId={session.retro._id}
+        retroTitle={session.retro.title}
+        cards={session.cards}
+        topics={session.retro.topics}
+        projectId={session.retro.projectId}
+        projectKey={session.retro.projectKey}
+        sprintId={session.retro.sprintId}
+        sprintName={session.retro.sprintName}
+        retroStartDate={session.retro.startDate || session.retro.scheduledDate}
+        retroEndDate={session.retro.endDate}
+        mode={exportModalMode}
+        canExport={session.canExportToSprint}
+        currentUser={session.currentUser}
+        onSessionEnded={session.endSession}
+        onCardsExported={session.setCards}
+      />
+
+      {toastFeedback && (
+        <div className="fixed bottom-6 right-6 z-50 px-4 py-3 rounded-xl bg-slate-900/95 dark:bg-[#0e1015]/95 text-white text-xs font-semibold shadow-2xl flex items-center gap-2.5 border border-slate-700/80 dark:border-white/[0.08] backdrop-blur-md animate-in slide-in-from-bottom-5">
+          <ShieldAlert className="w-4 h-4 text-amber-400 shrink-0" />
+          <span>{toastFeedback}</span>
+        </div>
+      )}
+    </div>
+  );
+}

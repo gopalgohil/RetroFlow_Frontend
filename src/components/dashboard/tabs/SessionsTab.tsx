@@ -1,0 +1,80 @@
+'use client';
+
+import React from 'react';
+import { RetroBoard } from '@/types/retro';
+import { SessionList } from '../SessionList';
+import { SessionsSkeleton } from '../skeletons/SessionsSkeleton';
+
+interface SessionsTabProps {
+  sessions: RetroBoard[];
+  isLoading: boolean;
+  activeSessionsCount: number;
+  onLaunch: (session: RetroBoard) => void;
+  onEdit: (session: RetroBoard) => void;
+  onDelete: (sessionId: string) => Promise<void>;
+  onToggleStatus?: (session: RetroBoard) => Promise<void>;
+  onCreateNew: () => void;
+  isAdmin?: boolean;
+  user?: { name?: string; email?: string; role?: string; projectRole?: string } | null;
+  searchQuery?: string;
+  onSearchChange?: (query: string) => void;
+}
+
+export const SessionsTab: React.FC<SessionsTabProps> = ({
+  sessions,
+  isLoading,
+  activeSessionsCount,
+  onLaunch,
+  onEdit,
+  onDelete,
+  onToggleStatus,
+  onCreateNew,
+  isAdmin = true,
+  user,
+  searchQuery,
+  onSearchChange,
+}) => {
+  if (isLoading && sessions.length === 0 && !searchQuery) {
+    return <SessionsSkeleton />;
+  }
+
+  const firstName = user?.name ? user.name.split(' ')[0] : 'there';
+  const completedCount = sessions.filter((s) => s.status === 'completed').length;
+  const totalTopicsCount = sessions.reduce((acc, s) => acc + (s.topics?.length || 3), 0);
+
+  return (
+    <div className="space-y-6 animate-in fade-in duration-200">
+      <div className="relative py-5 px-6 sm:py-6 sm:px-8 rounded-2xl bg-gradient-to-r from-[#5cb028] via-[#54a324] to-[#458b1b] text-white shadow-sm overflow-hidden flex flex-col md:flex-row items-start md:items-center justify-between gap-4 dark:from-[#0e1015] dark:via-[#0e1015] dark:to-[#0e1015] dark:border dark:border-white/[0.08] dark:shadow-2xl group">
+        <div className="absolute -right-10 -bottom-10 w-64 h-64 bg-white/10 dark:bg-[#88c958]/10 rounded-full blur-2xl dark:blur-3xl pointer-events-none" />
+        <div className="absolute top-2 right-1/4 w-32 h-32 bg-emerald-300/10 dark:bg-[#88c958]/5 rounded-full blur-xl dark:blur-2xl pointer-events-none" />
+
+        <div className="relative z-10 max-w-2xl space-y-1.5">
+          <h2 className="text-2xl sm:text-3xl font-extrabold tracking-tight text-white dark:font-black">
+            Welcome back, <span className="text-white dark:text-[#88c958]">{firstName}</span>!
+          </h2>
+
+          <p className="text-white/90 dark:text-slate-400 text-xs sm:text-sm leading-relaxed max-w-xl">
+            {isAdmin
+              ? "Here's an overview of your team sprint retrospectives, feedback topics, and continuous improvement action items."
+              : 'Collaborate live with your agile team, submit honest feedback on sprint questions, and vote on team action items in real-time.'}
+          </p>
+        </div>
+      </div>
+
+      <SessionList
+        sessions={sessions}
+        onLaunch={onLaunch}
+        onEdit={onEdit}
+        onDelete={onDelete}
+        onToggleStatus={onToggleStatus}
+        onCreateNew={onCreateNew}
+        isLoading={isLoading}
+        isAdmin={isAdmin}
+        searchQuery={searchQuery}
+        onSearchChange={onSearchChange}
+      />
+    </div>
+  );
+};
+
+export default SessionsTab;
